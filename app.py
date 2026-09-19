@@ -38,11 +38,13 @@ recommendation_rules = {
     }
 }
 
+
 def get_recommendation(predicted_class, confidence):
-    if confidence < 60:
+    if confidence < 70:  # raised from 60
         return {"grade": "RECHECK", "status": "Low Confidence", "urgency": "MANUAL CHECK",
                 "action": "Manual inspection recommended", "reason": "AI confidence is low; result should be verified."}
     return recommendation_rules[predicted_class]
+
 
 def predict(img):
     img = img.resize((224, 224))
