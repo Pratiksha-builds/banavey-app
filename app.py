@@ -28,6 +28,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 
+
 # Load the model once, cached so it doesn't reload on every interaction
 @st.cache_resource
 def load_model():
@@ -86,6 +87,8 @@ def predict(img):
 # ---- UI ----
 st.title("🍌 BanaVey AI")
 st.write("Upload a banana photo to check its ripeness and get a routing recommendation.")
+st.caption("🌍 Built for Jalgaon's banana supply chain — reducing post-harvest waste through AI")
+
 
 uploaded_file = st.file_uploader("Choose a banana photo", type=["jpg", "jpeg", "png"])
 
@@ -100,11 +103,18 @@ if uploaded_file is not None:
     st.subheader(f"Ripeness: {predicted_class.upper()}")
     st.write(f"**AI Confidence:** {confidence:.1f}%")
 
+        urgency_colors = {
+        "LOW": "🟢", "HIGH": "🟡", "VERY HIGH": "🟠", 
+        "IMMEDIATE": "🔴", "MANUAL CHECK": "⚪"
+    }
+    emoji = urgency_colors.get(rec["urgency"], "")
+
     col1, col2 = st.columns(2)
     with col1:
         st.metric("Grade", rec["grade"])
     with col2:
-        st.metric("Urgency", rec["urgency"])
+        st.metric("Urgency", f"{emoji} {rec['urgency']}")
+
 
     st.write(f"**Status:** {rec['status']}")
     st.write(f"**Recommended Action:** {rec['action']}")
