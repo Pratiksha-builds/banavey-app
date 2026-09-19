@@ -94,8 +94,8 @@ uploaded_file = st.file_uploader("Choose a banana photo", type=["jpg", "jpeg", "
 
 if uploaded_file is not None:
     image = Image.open(uploaded_file).convert("RGB")
-    st.image(image, caption="Uploaded photo", width="stretch")
-    
+    st.image(image, caption="Uploaded photo", use_container_width=True)
+
     with st.spinner("Analyzing..."):
         predicted_class, confidence = predict(image)
         rec = get_recommendation(predicted_class, confidence)
@@ -103,7 +103,7 @@ if uploaded_file is not None:
     st.subheader(f"Ripeness: {predicted_class.upper()}")
     st.write(f"**AI Confidence:** {confidence:.1f}%")
 
-        urgency_colors = {
+    urgency_colors = {
         "LOW": "🟢", "HIGH": "🟡", "VERY HIGH": "🟠", 
         "IMMEDIATE": "🔴", "MANUAL CHECK": "⚪"
     }
@@ -115,7 +115,6 @@ if uploaded_file is not None:
     with col2:
         st.metric("Urgency", f"{emoji} {rec['urgency']}")
 
-
     st.write(f"**Status:** {rec['status']}")
     st.write(f"**Recommended Action:** {rec['action']}")
     st.write(f"**Reason:** {rec['reason']}")
@@ -123,3 +122,5 @@ if uploaded_file is not None:
     st.subheader("🌍 Estimated Impact")
     st.info(rec.get("impact", "No impact data available."))
     st.caption("Note: Impact statements are illustrative estimates based on ripeness stage, not measured data.")
+
+
