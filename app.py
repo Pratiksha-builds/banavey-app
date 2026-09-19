@@ -5,6 +5,28 @@ from PIL import Image
 
 # Page setup
 st.set_page_config(page_title="BanaVey AI", page_icon="🍌", layout="centered")
+st.markdown("""
+<style>
+    .stApp {
+        background-color: #1a1a2e;
+    }
+    h1 {
+        color: #f9d71c;
+    }
+    .stButton>button {
+        background-color: #f9d71c;
+        color: #1a1a2e;
+        font-weight: bold;
+    }
+    div[data-testid="stMetricValue"] {
+        color: #f9d71c;
+    }
+    .stInfo {
+        border-left: 4px solid #4CAF50;
+    }
+</style>
+""", unsafe_allow_html=True)
+
 
 # Load the model once, cached so it doesn't reload on every interaction
 @st.cache_resource
