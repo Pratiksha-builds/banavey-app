@@ -120,7 +120,7 @@ if uploaded_file is not None:
     st.write(f"**Reason:** {rec['reason']}")
     st.markdown("---")
     st.subheader("🌍 Estimated Impact")
-    st.info(rec.get("impact", "No impact data available."))
+    st.info(rec.get("impact", "Impact assessment pending manual verification."))
     st.caption("Note: Impact statements are illustrative estimates based on ripeness stage, not measured data.")
 
 
