@@ -19,24 +19,29 @@ recommendation_rules = {
     "unripe": {
         "grade": "A", "status": "Early Stage", "urgency": "LOW",
         "action": "Long-distance transport / controlled distribution",
-        "reason": "Firm and unripe; generally more suitable for transport before full ripening."
+        "reason": "Firm and unripe; generally more suitable for transport before full ripening.",
+        "impact": "Low waste risk right now — routing early helps this batch reach full value before spoilage becomes a concern."
     },
     "ripe": {
         "grade": "B", "status": "Market Ready", "urgency": "HIGH",
         "action": "Prioritize regional or local retail",
-        "reason": "Already ripe, so it should reach the market relatively quickly."
+        "reason": "Already ripe, so it should reach the market relatively quickly.",
+        "impact": "Peak market value right now — quick routing to local retail captures full value before quality declines."
     },
     "overripe": {
         "grade": "C", "status": "Processing Priority", "urgency": "VERY HIGH",
         "action": "Prioritize processing / value addition",
-        "reason": "Fresh-market suitability is declining; processing helps recover value."
+        "reason": "Fresh-market suitability is declining; processing helps recover value.",
+        "impact": "Without action, this batch risks becoming a total loss. Redirecting to processing (chips, jam) recovers meaningful value instead of discarding it."
     },
     "rotten": {
         "grade": "D", "status": "Spoiled", "urgency": "IMMEDIATE",
         "action": "Reject from food-market route; use appropriate waste management",
-        "reason": "Severe visible spoilage makes it unsuitable for normal fresh sale."
+        "reason": "Severe visible spoilage makes it unsuitable for normal fresh sale.",
+        "impact": "No recoverable market value remains. Early, correct identification prevents spoiled stock from contaminating or being mixed with sellable batches."
     }
 }
+
 
 
 def get_recommendation(predicted_class, confidence):
@@ -82,3 +87,7 @@ if uploaded_file is not None:
     st.write(f"**Status:** {rec['status']}")
     st.write(f"**Recommended Action:** {rec['action']}")
     st.write(f"**Reason:** {rec['reason']}")
+    st.markdown("---")
+    st.subheader("🌍 Estimated Impact")
+    st.info(rec.get("impact", "No impact data available."))
+    st.caption("Note: Impact statements are illustrative estimates based on ripeness stage, not measured data.")
