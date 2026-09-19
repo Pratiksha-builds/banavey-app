@@ -69,8 +69,8 @@ uploaded_file = st.file_uploader("Choose a banana photo", type=["jpg", "jpeg", "
 
 if uploaded_file is not None:
     image = Image.open(uploaded_file).convert("RGB")
-    st.image(image, caption="Uploaded photo", use_container_width=True)
-
+    st.image(image, caption="Uploaded photo", width="stretch")
+    
     with st.spinner("Analyzing..."):
         predicted_class, confidence = predict(image)
         rec = get_recommendation(predicted_class, confidence)
