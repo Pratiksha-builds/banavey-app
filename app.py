@@ -115,6 +115,7 @@ urgency_colors = {
     "IMMEDIATE": "🔴", "MANUAL CHECK": "⚪"
 }
 
+
 if mode == "📷 Single Scan":
     uploaded_file = st.file_uploader("Choose a banana photo", type=["jpg", "jpeg", "png"])
 
@@ -144,6 +145,23 @@ if mode == "📷 Single Scan":
         st.subheader("🧠 BanaVey Decision Insight")
         st.info(rec.get("impact", "Impact assessment pending manual verification."))
         st.caption("Note: Insight statements are based on ripeness stage classification, not measured shelf-life data.")
+
+        st.markdown("---")
+        with st.expander("🔮 What Happens Next? (Scenario Simulation)"):
+            st.caption("This shows a typical ripening progression scenario — not a re-analysis of this exact banana over time.")
+            stage_progression = ["unripe", "ripe", "overripe", "rotten"]
+            if predicted_class in stage_progression:
+                current_index = stage_progression.index(predicted_class)
+                for days_ahead, label in [(1, "In ~1 day"), (2, "In ~2 days"), (3, "In ~3 days")]:
+                    future_index = min(current_index + days_ahead, len(stage_progression) - 1)
+                    future_stage = stage_progression[future_index]
+                    future_info = recommendation_rules[future_stage]
+                    stage_emoji = urgency_colors.get(future_info["urgency"], "")
+                    st.write(f"**{label}:** {stage_emoji} Likely stage: **{future_stage.upper()}** → {future_info['action']}")
+            else:
+                st.write("Scenario simulation isn't available for a low-confidence result — please recheck manually first.")
+
+    
 
 else:  # Batch Scan
     st.subheader("📦 Batch Scanner")
