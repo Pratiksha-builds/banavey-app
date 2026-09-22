@@ -3,6 +3,42 @@ import tensorflow as tf
 import numpy as np
 from PIL import Image
 
+import qrcode
+from io import BytesIO
+import urllib.parse
+from datetime import datetime
+
+def generate_passport_qr(data_dict):
+    query_string = urllib.parse.urlencode(data_dict)
+    app_url = "https://banavey-app-etesbszsteozcwmqcy9pjc.streamlit.app"  # your actual app URL
+    full_url = f"{app_url}/?{query_string}"
+
+    qr = qrcode.QRCode(box_size=8, border=2)
+    qr.add_data(full_url)
+    qr.make(fit=True)
+    img = qr.make_image(fill_color="#1a1a2e", back_color="#f9d71c")
+
+    buf = BytesIO()
+    img.save(buf, format="PNG")
+    return buf.getvalue(), full_url
+
+def show_passport_view(params):
+    st.markdown("""
+    <div style="background: linear-gradient(135deg, #2d2d5f, #1a1a2e); padding: 30px; border-radius: 16px; border: 2px solid #f9d71c;">
+        <h2 style="margin-top:0;">🍌 BanaVey Digital Passport</h2>
+    """, unsafe_allow_html=True)
+
+    st.write(f"**Batch ID:** {params.get('batch_id', 'N/A')}")
+    st.write(f"**Detected Stage:** {params.get('stage', 'N/A').upper()}")
+    st.write(f"**AI Confidence:** {params.get('confidence', 'N/A')}%")
+    st.write(f"**Decision Class:** {params.get('grade', 'N/A')}")
+    st.write(f"**Urgency:** {params.get('urgency', 'N/A')}")
+    st.write(f"**Recommended Route:** {params.get('action', 'N/A')}")
+    st.write(f"**Scan Date:** {params.get('date', 'N/A')}")
+    st.markdown("</div>", unsafe_allow_html=True)
+    st.caption("This passport was generated from a real BanaVey AI scan.")
+
+
 # Page setup
 st.set_page_config(page_title="BanaVey AI", page_icon="🍌", layout="centered")
 st.markdown("""
@@ -121,6 +157,12 @@ st.markdown("""
 
 mode = st.radio("Choose mode:", ["📷 Single Scan", "📦 Batch Scan"], horizontal=True)
 
+query_params = st.query_params
+if "batch_id" in query_params:
+    show_passport_view(query_params)
+    st.stop()
+
+
 urgency_colors = {
     "LOW": "🟢", "HIGH": "🟡", "VERY HIGH": "🟠",
     "IMMEDIATE": "🔴", "MANUAL CHECK": "⚪"
@@ -171,8 +213,24 @@ if mode == "📷 Single Scan":
                     st.write(f"**{label}:** {stage_emoji} Likely stage: **{future_stage.upper()}** → {future_info['action']}")
             else:
                 st.write("Scenario simulation isn't available for a low-confidence result — please recheck manually first.")
+                st.markdown("---")
+                if st.button("📱 Generate Digital Passport"):
+                    batch_id = f"BV-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+                    passport_data = {
+                        "batch_id": batch_id,
+                        "stage": predicted_class,
+                        "confidence": f"{confidence:.1f}",
+                        "grade": rec["grade"],
+                        "urgency": rec["urgency"],
+                        "action": rec["action"],
+                        "date": datetime.now().strftime("%d %b %Y")
+                        
+                        }
+                    qr_bytes, passport_url = generate_passport_qr(passport_data)
+                    st.image(qr_bytes, caption="Scan to view this banana's Digital Passport", width=250)
+                    st.caption(f"Or visit: {passport_url}")
 
-    
+
 
 else:  # Batch Scan
     st.subheader("📦 Batch Scanner")
