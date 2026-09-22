@@ -213,39 +213,22 @@ if mode == "📷 Single Scan":
                     st.write(f"**{label}:** {stage_emoji} Likely stage: **{future_stage.upper()}** → {future_info['action']}")
             else:
                 st.write("Scenario simulation isn't available for a low-confidence result — please recheck manually first.")
-                st.markdown("---")
-                if st.button("📱 Generate Digital Passport"):
-                    batch_id = f"BV-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
-                    passport_data = {
-                        "batch_id": batch_id,
-                        "stage": predicted_class,
-                        "confidence": f"{confidence:.1f}",
-                        "grade": rec["grade"],
-                        "urgency": rec["urgency"],
-                        "action": rec["action"],
-                        "date": datetime.now().strftime("%d %b %Y")
-                        
-                        }
-                    qr_bytes, passport_url = generate_passport_qr(passport_data)
-                    st.image(qr_bytes, caption="Scan to view this banana's Digital Passport", width=250)
-                    st.caption(f"Or visit: {passport_url}")
-                    st.write("Scenario simulation isn't available for a low-confidence result — please recheck manually first.")
 
-                    st.markdown("---")
-                    if st.button("📱 Generate Digital Passport"):
-                        batch_id = f"BV-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
-                        passport_data = {
-                            "batch_id": batch_id,
-                            "stage": predicted_class,
-                            "confidence": f"{confidence:.1f}",
-                            "grade": rec["grade"],
-                            "urgency": rec["urgency"],
-                            "action": rec["action"],
-                            "date": datetime.now().strftime("%d %b %Y")
-                            }
-                        qr_bytes, passport_url = generate_passport_qr(passport_data)
-                        st.image(qr_bytes, caption="Scan to view this banana's Digital Passport", width=250)
-                        st.caption(f"Or visit: {passport_url}")
+        st.markdown("---")
+        if st.button("📱 Generate Digital Passport"):
+            batch_id = f"BV-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+            passport_data = {
+                "batch_id": batch_id,
+                "stage": predicted_class,
+                "confidence": f"{confidence:.1f}",
+                "grade": rec["grade"],
+                "urgency": rec["urgency"],
+                "action": rec["action"],
+                "date": datetime.now().strftime("%d %b %Y")
+            }
+            qr_bytes, passport_url = generate_passport_qr(passport_data)
+            st.image(qr_bytes, caption="Scan to view this banana's Digital Passport", width=250)
+            st.caption(f"Or visit: {passport_url}")
 
 
 
