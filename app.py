@@ -8,25 +8,46 @@ st.set_page_config(page_title="BanaVey AI", page_icon="🍌", layout="centered")
 st.markdown("""
 <style>
     .stApp {
-        background-color: #1a1a2e;
+        background: linear-gradient(180deg, #1a1a2e 0%, #16213e 100%);
     }
     h1 {
+        color: #f9d71c;
+        font-weight: 800;
+    }
+    h2, h3 {
         color: #f9d71c;
     }
     .stButton>button {
         background-color: #f9d71c;
         color: #1a1a2e;
         font-weight: bold;
+        border-radius: 8px;
+        border: none;
+        padding: 0.5rem 1.5rem;
     }
     div[data-testid="stMetricValue"] {
         color: #f9d71c;
+        font-size: 2rem;
+    }
+    div[data-testid="stMetric"] {
+        background-color: rgba(249, 215, 28, 0.08);
+        border-radius: 12px;
+        padding: 10px;
+        border: 1px solid rgba(249, 215, 28, 0.2);
     }
     .stInfo {
         border-left: 4px solid #4CAF50;
+        border-radius: 8px;
+    }
+    div[data-testid="stExpander"] {
+        border: 1px solid rgba(249, 215, 28, 0.3);
+        border-radius: 10px;
+    }
+    .stRadio > label {
+        font-weight: 600;
     }
 </style>
 """, unsafe_allow_html=True)
-
 
 
 # Load the model once, cached so it doesn't reload on every interaction
@@ -88,6 +109,15 @@ def predict(img):
 st.title("🍌 BanaVey AI")
 st.write("Upload a banana photo to check its ripeness and get a routing recommendation.")
 st.caption("🌍 Built for Jalgaon's banana supply chain — reducing post-harvest waste through AI")
+
+st.markdown("""
+<div style="background: linear-gradient(90deg, #2d2d5f, #1a1a2e); padding: 20px; border-radius: 12px; margin-bottom: 20px; border: 1px solid rgba(249,215,28,0.3);">
+    <p style="color: #ccc; margin: 0; font-size: 0.95rem;">🌍 <b>From Banana Image → Post-Harvest Action</b><br>
+    AI-powered ripeness detection with routing, value-recovery, and traceability for Jalgaon's banana supply chain.</p>
+</div>
+""", unsafe_allow_html=True)
+
+
 
 mode = st.radio("Choose mode:", ["📷 Single Scan", "📦 Batch Scan"], horizontal=True)
 
