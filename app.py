@@ -90,6 +90,22 @@ st.write("Upload a banana photo to check its ripeness and get a routing recommen
 st.caption("🌍 Built for Jalgaon's banana supply chain — reducing post-harvest waste through AI")
 
 mode = st.radio("Choose mode:", ["📷 Single Scan", "📦 Batch Scan"], horizontal=True)
+st.caption("Note: Insight statements are based on ripeness stage classification, not measured shelf-life data.")
+
+        st.markdown("---")
+        with st.expander("🔮 What Happens Next? (Scenario Simulation)"):
+            st.caption("This shows a typical ripening progression scenario — not a re-analysis of this exact banana over time.")
+            stage_progression = ["unripe", "ripe", "overripe", "rotten"]
+            if predicted_class in stage_progression:
+                current_index = stage_progression.index(predicted_class)
+                for days_ahead, label in [(1, "In ~1 day"), (2, "In ~2 days"), (3, "In ~3 days")]:
+                    future_index = min(current_index + days_ahead, len(stage_progression) - 1)
+                    future_stage = stage_progression[future_index]
+                    future_info = recommendation_rules[future_stage]
+                    emoji = urgency_colors.get(future_info["urgency"], "")
+                    st.write(f"**{label}:** {emoji} Likely stage: **{future_stage.upper()}** → {future_info['action']}")
+            else:
+                st.write("Scenario simulation isn't available for a low-confidence result — please recheck manually first.")
 
 urgency_colors = {
     "LOW": "🟢", "HIGH": "🟡", "VERY HIGH": "🟠",
