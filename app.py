@@ -696,6 +696,41 @@ else:
             st.markdown("🔴 **Rotten** — No fresh-market or processing value; safely routed to waste management.")
 
         st.markdown("---")
+        st.markdown("### 🎯 Model Accuracy & Known Limitations")
+        st.markdown("""
+        <div class="bv-card">
+            <p style="margin:4px 0;">BanaVey's classifier (a fine-tuned MobileNetV2) achieves
+            <b style="color:#f9d71c;">95.7% accuracy</b> on a held-out test set of 562 images
+            across all four ripeness stages.</p>
+        </div>
+        """, unsafe_allow_html=True)
+
+        c1, c2, c3, c4 = st.columns(4)
+        with c1:
+            st.metric("🟠 Overripe", "94.7%", help="106/113 correct on test set")
+        with c2:
+            st.metric("🟡 Ripe", "98.1%", help="151/154 correct on test set")
+        with c3:
+            st.metric("🔴 Rotten", "92.4%", help="171/185 correct on test set")
+        with c4:
+            st.metric("🟢 Unripe", "100%", help="110/110 correct on test set")
+
+        with st.expander("⚠️ Known limitation: Overripe ↔ Rotten boundary"):
+            st.write(
+                "Our model's main confusion is between **overripe** and **rotten** bananas — "
+                "of 185 truly-rotten test images, 171 were classified correctly, but 10 were "
+                "predicted as ripe or overripe instead."
+            )
+            st.write(
+                "This isn't random error — it reflects a genuinely blurry visual boundary. As dark "
+                "spotting spreads across the peel, there's no single clear-cut point where 'heavily "
+                "spotted overripe' becomes 'rotten'; even humans can disagree on borderline photos. "
+                "We report this openly rather than hide it, because knowing a model's real limitations "
+                "is part of using it responsibly."
+            )
+            st.caption("Very low-confidence predictions are automatically flagged for manual recheck rather than acted on.")
+
+        st.markdown("---")
         st.caption("BanaVey was built to reduce post-harvest banana waste in Jalgaon's supply chain using AI-based decision support.")
 
     st.markdown('<div class="bv-footer">🍌 BanaVey AI · Mind Spring Exhibition · 5 October 2026</div>', unsafe_allow_html=True)
