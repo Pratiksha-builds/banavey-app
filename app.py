@@ -1,12 +1,15 @@
 import streamlit as st
 import tensorflow as tf
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageOps
 
 import qrcode
 from io import BytesIO
 import urllib.parse
 from datetime import datetime
+import csv
+from collections import Counter
+
 
 def generate_passport_qr(data_dict):
     query_string = urllib.parse.urlencode(data_dict)
@@ -22,9 +25,17 @@ def generate_passport_qr(data_dict):
     img.save(buf, format="PNG")
     return buf.getvalue(), full_url
 
+
+def load_image(file_or_path):
+    """Open an image and fix phone-camera EXIF rotation."""
+    img = Image.open(file_or_path)
+    img = ImageOps.exif_transpose(img)
+    return img.convert("RGB")
+
+
 def show_passport_view(params):
     st.markdown("""
-    <div style="background: linear-gradient(135deg, #2d2d5f, #1a1a2e); padding: 30px; border-radius: 16px; border: 2px solid #f9d71c;">
+    <div class="bv-card" style="border: 2px solid #f9d71c;">
         <h2 style="margin-top:0;">🍌 BanaVey Digital Passport</h2>
     """, unsafe_allow_html=True)
 
@@ -38,49 +49,129 @@ def show_passport_view(params):
     st.markdown("</div>", unsafe_allow_html=True)
     st.caption("This passport was generated from a real BanaVey AI scan.")
 
+    st.markdown("<br>", unsafe_allow_html=True)
+    if st.button("← Back to Scanner"):
+        st.query_params.clear()
+        st.rerun()
 
-# Page setup
+
+# ---------------- Page setup ----------------
 st.set_page_config(page_title="BanaVey AI", page_icon="🍌", layout="centered")
+
 st.markdown("""
 <style>
-    .stApp {
-        background: linear-gradient(180deg, #1a1a2e 0%, #16213e 100%);
+    @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;700;800&display=swap');
+
+    html, body, [class*="css"] {
+        font-family: 'Poppins', sans-serif;
     }
+
+    .stApp {
+        background: radial-gradient(circle at top left, #22224a 0%, #1a1a2e 45%, #16213e 100%);
+    }
+
     h1 {
         color: #f9d71c;
         font-weight: 800;
+        letter-spacing: -0.5px;
     }
     h2, h3 {
         color: #f9d71c;
+        font-weight: 700;
     }
+
+    /* Buttons */
     .stButton>button {
-        background-color: #f9d71c;
+        background: linear-gradient(135deg, #ffe066, #f9d71c);
         color: #1a1a2e;
-        font-weight: bold;
-        border-radius: 8px;
+        font-weight: 700;
+        border-radius: 10px;
         border: none;
-        padding: 0.5rem 1.5rem;
+        padding: 0.6rem 1.6rem;
+        box-shadow: 0 4px 14px rgba(249, 215, 28, 0.25);
+        transition: transform 0.15s ease, box-shadow 0.15s ease;
     }
+    .stButton>button:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 6px 20px rgba(249, 215, 28, 0.4);
+        color: #1a1a2e;
+    }
+
+    /* Metrics */
     div[data-testid="stMetricValue"] {
         color: #f9d71c;
         font-size: 2rem;
+        font-weight: 800;
     }
     div[data-testid="stMetric"] {
-        background-color: rgba(249, 215, 28, 0.08);
-        border-radius: 12px;
-        padding: 10px;
-        border: 1px solid rgba(249, 215, 28, 0.2);
+        background: rgba(249, 215, 28, 0.08);
+        border-radius: 14px;
+        padding: 12px;
+        border: 1px solid rgba(249, 215, 28, 0.25);
     }
+
     .stInfo {
         border-left: 4px solid #4CAF50;
-        border-radius: 8px;
-    }
-    div[data-testid="stExpander"] {
-        border: 1px solid rgba(249, 215, 28, 0.3);
         border-radius: 10px;
     }
-    .stRadio > label {
+
+    div[data-testid="stExpander"] {
+        border: 1px solid rgba(249, 215, 28, 0.3);
+        border-radius: 12px;
+        background: rgba(255,255,255,0.02);
+    }
+
+    /* Tabs */
+    button[data-baseweb="tab"] {
         font-weight: 600;
+        border-radius: 10px 10px 0 0;
+    }
+    button[data-baseweb="tab"][aria-selected="true"] {
+        color: #f9d71c !important;
+        border-bottom: 3px solid #f9d71c !important;
+    }
+
+    /* Uploaded / sample image */
+    div[data-testid="stImage"] img {
+        border-radius: 14px;
+        box-shadow: 0 6px 20px rgba(0,0,0,0.35);
+    }
+
+    /* Custom card */
+    .bv-card {
+        background: linear-gradient(135deg, #2d2d5f, #1a1a2e);
+        padding: 26px;
+        border-radius: 16px;
+        border: 1px solid rgba(249,215,28,0.25);
+        margin-bottom: 20px;
+    }
+    .bv-badge {
+        display: inline-block;
+        padding: 4px 14px;
+        border-radius: 999px;
+        font-weight: 700;
+        font-size: 0.85rem;
+    }
+    .bv-footer {
+        text-align: center;
+        color: #777;
+        font-size: 0.8rem;
+        padding: 30px 0 10px 0;
+    }
+
+    /* Confidence bar */
+    .bv-conf-track {
+        background: rgba(255,255,255,0.08);
+        border-radius: 999px;
+        height: 10px;
+        width: 100%;
+        overflow: hidden;
+        margin: 6px 0 2px 0;
+    }
+    .bv-conf-fill {
+        background: linear-gradient(90deg, #f9d71c, #ffe066);
+        height: 100%;
+        border-radius: 999px;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -89,6 +180,7 @@ st.markdown("""
 @st.cache_resource
 def load_model():
     return tf.keras.models.load_model('banavey_model.keras')
+
 
 model = load_model()
 
@@ -121,6 +213,16 @@ recommendation_rules = {
     }
 }
 
+urgency_colors = {
+    "LOW": "🟢", "HIGH": "🟡", "VERY HIGH": "🟠",
+    "IMMEDIATE": "🔴", "MANUAL CHECK": "⚪"
+}
+
+urgency_hex = {
+    "LOW": "#4CAF50", "HIGH": "#f9d71c", "VERY HIGH": "#ff9800",
+    "IMMEDIATE": "#e53935", "MANUAL CHECK": "#9e9e9e"
+}
+
 
 def get_recommendation(predicted_class, confidence):
     if confidence < 70:
@@ -130,8 +232,8 @@ def get_recommendation(predicted_class, confidence):
 
 
 def predict(img):
-    img = img.resize((224, 224))
-    img_array = tf.keras.utils.img_to_array(img)
+    img_r = img.resize((224, 224))
+    img_array = tf.keras.utils.img_to_array(img_r)
     img_array = np.expand_dims(img_array, axis=0)
     prediction = model.predict(img_array, verbose=0)
     predicted_index = np.argmax(prediction[0])
@@ -140,7 +242,42 @@ def predict(img):
     return predicted_class, confidence
 
 
-# ---- Landing screen gating ----
+def render_confidence_bar(confidence):
+    st.markdown(f"""
+    <div class="bv-conf-track">
+        <div class="bv-conf-fill" style="width:{confidence:.1f}%;"></div>
+    </div>
+    <p style="color:#aaa; font-size:0.85rem; margin-top:0;">AI Confidence: <b style="color:#f9d71c;">{confidence:.1f}%</b></p>
+    """, unsafe_allow_html=True)
+
+
+def render_result_card(predicted_class, confidence, rec):
+    emoji = urgency_colors.get(rec["urgency"], "")
+    hexcol = urgency_hex.get(rec["urgency"], "#f9d71c")
+
+    st.subheader(f"Ripeness: {predicted_class.upper()}")
+    render_confidence_bar(confidence)
+
+    col1, col2 = st.columns(2)
+    with col1:
+        st.metric("Decision Class", rec["grade"])
+    with col2:
+        st.metric("Urgency", f"{emoji} {rec['urgency']}")
+
+    st.markdown(f"""
+    <div class="bv-card">
+        <p style="margin:4px 0;"><b>Status:</b> {rec['status']}</p>
+        <p style="margin:4px 0;"><b>Recommended Action:</b> {rec['action']}</p>
+        <p style="margin:4px 0;"><b>Reason:</b> {rec['reason']}</p>
+    </div>
+    """, unsafe_allow_html=True)
+
+    st.subheader("🧠 BanaVey Decision Insight")
+    st.info(rec.get("impact", "Impact assessment pending manual verification."))
+    st.caption("Note: Insight statements are based on ripeness stage classification, not measured shelf-life data.")
+
+
+# ---------------- Landing screen gating ----------------
 if "entered_app" not in st.session_state:
     st.session_state.entered_app = False
 
@@ -152,11 +289,11 @@ if "batch_id" in query_params:
 
 if not st.session_state.entered_app:
     st.markdown("""
-    <div style="text-align: center; padding: 40px 20px;">
-        <div style="font-size: 4rem;">🍌</div>
-        <h1 style="color: #f9d71c; margin-bottom: 0;">BanaVey AI</h1>
-        <p style="font-size: 1.2rem; color: #ccc; margin-top: 5px;">From Banana Image → Post-Harvest Action</p>
-        <p style="color: #999; max-width: 500px; margin: 20px auto;">
+    <div style="text-align: center; padding: 50px 20px 20px 20px;">
+        <div style="font-size: 4.5rem;">🍌</div>
+        <h1 style="color: #f9d71c; margin-bottom: 0; font-size: 2.6rem;">BanaVey AI</h1>
+        <p style="font-size: 1.2rem; color: #ddd; margin-top: 8px;">From Banana Image → Post-Harvest Action</p>
+        <p style="color: #999; max-width: 520px; margin: 20px auto; line-height: 1.6;">
             An AI-powered decision support system helping Jalgaon's banana supply chain
             reduce waste through smart ripeness detection, routing, and traceability.
         </p>
@@ -169,67 +306,66 @@ if not st.session_state.entered_app:
             st.session_state.entered_app = True
             st.rerun()
 
-    st.markdown("---")
+    st.markdown("<br>", unsafe_allow_html=True)
     c1, c2, c3 = st.columns(3)
-    with c1:
-        st.markdown("**🤖 AI Vision**")
-        st.caption("Identifies banana ripeness from a photo")
-    with c2:
-        st.markdown("**🚦 Smart Routing**")
-        st.caption("Suggests the right next step")
-    with c3:
-        st.markdown("**📱 Digital Passport**")
-        st.caption("QR-based traceable record")
+    feature_cards = [
+        ("🤖", "AI Vision", "Identifies banana ripeness from a photo"),
+        ("🚦", "Smart Routing", "Suggests the right next step"),
+        ("📱", "Digital Passport", "QR-based traceable record"),
+    ]
+    for col, (icon, title, desc) in zip([c1, c2, c3], feature_cards):
+        with col:
+            st.markdown(f"""
+            <div class="bv-card" style="text-align:center; padding: 20px 14px;">
+                <div style="font-size:1.8rem;">{icon}</div>
+                <div style="color:#f9d71c; font-weight:700; margin-top:6px;">{title}</div>
+                <div style="color:#999; font-size:0.85rem; margin-top:4px;">{desc}</div>
+            </div>
+            """, unsafe_allow_html=True)
+
+    st.markdown('<div class="bv-footer">Built for Mind Spring Exhibition · 5 October 2026</div>', unsafe_allow_html=True)
 
 else:
-    # ---- UI ----
-    st.title("🍌 BanaVey AI")
-    st.write("Upload a banana photo to check its ripeness and get a routing recommendation.")
-    st.caption("🌍 Built for Jalgaon's banana supply chain — reducing post-harvest waste through AI")
+    # ---------------- Main app ----------------
+    st.markdown("""
+    <div style="text-align:center; margin-bottom: 4px;">
+        <span style="font-size:2.4rem;">🍌</span>
+    </div>
+    """, unsafe_allow_html=True)
+    st.markdown("<h1 style='text-align:center; margin-top:0;'>BanaVey AI</h1>", unsafe_allow_html=True)
+    st.markdown(
+        "<p style='text-align:center; color:#ccc;'>Upload a banana photo to check its ripeness and get a routing recommendation.</p>",
+        unsafe_allow_html=True
+    )
+    st.markdown(
+        "<p style='text-align:center; color:#888; font-size:0.9rem;'>🌍 Built for Jalgaon's banana supply chain — reducing post-harvest waste through AI</p>",
+        unsafe_allow_html=True
+    )
 
     st.markdown("""
-    <div style="background: linear-gradient(90deg, #2d2d5f, #1a1a2e); padding: 20px; border-radius: 12px; margin-bottom: 20px; border: 1px solid rgba(249,215,28,0.3);">
+    <div class="bv-card">
         <p style="color: #ccc; margin: 0; font-size: 0.95rem;">🌍 <b>From Banana Image → Post-Harvest Action</b><br>
         AI-powered ripeness detection with routing, value-recovery, and traceability for Jalgaon's banana supply chain.</p>
     </div>
     """, unsafe_allow_html=True)
 
-    mode = st.radio("Choose mode:", ["📷 Single Scan", "📦 Batch Scan", "🎪 Exhibition Demo", "📚 Learn"], horizontal=True)
+    tab_single, tab_batch, tab_demo, tab_learn = st.tabs(
+        ["📷 Single Scan", "📦 Batch Scan", "🎪 Exhibition Demo", "📚 Learn"]
+    )
 
-    urgency_colors = {
-        "LOW": "🟢", "HIGH": "🟡", "VERY HIGH": "🟠",
-        "IMMEDIATE": "🔴", "MANUAL CHECK": "⚪"
-    }
-
-    if mode == "📷 Single Scan":
-        uploaded_file = st.file_uploader("Choose a banana photo", type=["jpg", "jpeg", "png"])
+    # ---------- Single Scan ----------
+    with tab_single:
+        uploaded_file = st.file_uploader("Choose a banana photo", type=["jpg", "jpeg", "png"], key="single")
 
         if uploaded_file is not None:
-            image = Image.open(uploaded_file).convert("RGB")
+            image = load_image(uploaded_file)
             st.image(image, caption="Uploaded photo", width="stretch")
 
             with st.spinner("Analyzing..."):
                 predicted_class, confidence = predict(image)
                 rec = get_recommendation(predicted_class, confidence)
 
-            st.subheader(f"Ripeness: {predicted_class.upper()}")
-            st.write(f"**AI Confidence:** {confidence:.1f}%")
-
-            emoji = urgency_colors.get(rec["urgency"], "")
-
-            col1, col2 = st.columns(2)
-            with col1:
-                st.metric("Decision Class", rec["grade"])
-            with col2:
-                st.metric("Urgency", f"{emoji} {rec['urgency']}")
-
-            st.write(f"**Status:** {rec['status']}")
-            st.write(f"**Recommended Action:** {rec['action']}")
-            st.write(f"**Reason:** {rec['reason']}")
-            st.markdown("---")
-            st.subheader("🧠 BanaVey Decision Insight")
-            st.info(rec.get("impact", "Impact assessment pending manual verification."))
-            st.caption("Note: Insight statements are based on ripeness stage classification, not measured shelf-life data.")
+            render_result_card(predicted_class, confidence, rec)
 
             st.markdown("---")
             with st.expander("🔮 What Happens Next? (Scenario Simulation)"):
@@ -262,21 +398,23 @@ else:
                 st.image(qr_bytes, caption="Scan to view this banana's Digital Passport", width=250)
                 st.caption(f"Or visit: {passport_url}")
 
-    elif mode == "📦 Batch Scan":
+    # ---------- Batch Scan ----------
+    with tab_batch:
         st.subheader("📦 Batch Scanner")
         st.write("Upload several banana photos at once to see the whole batch's condition and priority actions.")
 
         uploaded_files = st.file_uploader(
             "Choose banana photos",
             type=["jpg", "jpeg", "png"],
-            accept_multiple_files=True
+            accept_multiple_files=True,
+            key="batch"
         )
 
         if uploaded_files:
             results = []
             with st.spinner(f"Analyzing {len(uploaded_files)} bananas..."):
                 for f in uploaded_files:
-                    img = Image.open(f).convert("RGB")
+                    img = load_image(f)
                     predicted_class, confidence = predict(img)
                     rec = get_recommendation(predicted_class, confidence)
                     results.append({
@@ -287,7 +425,6 @@ else:
 
             st.markdown(f"### Batch Summary — {len(results)} bananas scanned")
 
-            from collections import Counter
             counts = Counter()
             for r in results:
                 if r["grade"] == "RECHECK":
@@ -313,6 +450,20 @@ else:
             if recheck_items:
                 st.write(f"**{len(recheck_items)} banana(s) need manual recheck** (low AI confidence)")
 
+            # CSV export
+            import io as _io
+            text_buf = _io.StringIO()
+            writer = csv.writer(text_buf)
+            writer.writerow(["Filename", "Ripeness", "Confidence (%)", "Decision Class", "Urgency", "Recommended Action"])
+            for r in results:
+                writer.writerow([r["filename"], r["ripeness"], f"{r['confidence']:.1f}", r["grade"], r["urgency"], r["action"]])
+            st.download_button(
+                "⬇️ Download Batch Report (CSV)",
+                data=text_buf.getvalue(),
+                file_name=f"banavey_batch_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                mime="text/csv"
+            )
+
             with st.expander("See individual results"):
                 grid_cols = st.columns(4)
                 for i, r in enumerate(results):
@@ -320,13 +471,15 @@ else:
                         st.image(r["image"], width="stretch")
                         st.caption(f"{r['ripeness'].upper()} ({r['confidence']:.0f}%)")
 
-    elif mode == "🎪 Exhibition Demo":
+    # ---------- Exhibition Demo ----------
+    with tab_demo:
         st.subheader("🎪 Exhibition Demo")
         st.write("Choose a prepared sample to instantly see BanaVey's full analysis.")
 
         sample_choice = st.radio(
             "Choose a sample:",
-            ["🟢 Unripe Banana", "🟡 Ripe Banana", "🟠 Overripe Banana", "🔴 Rotten Banana", "📦 Mixed Batch"]
+            ["🟢 Unripe Banana", "🟡 Ripe Banana", "🟠 Overripe Banana", "🔴 Rotten Banana", "📦 Mixed Batch"],
+            horizontal=True
         )
 
         sample_map = {
@@ -336,56 +489,53 @@ else:
             "🔴 Rotten Banana": "samples/rotten.jpg",
         }
 
-        if sample_choice == "📦 Mixed Batch":
-            results = []
-            for path in sample_map.values():
-                img = Image.open(path).convert("RGB")
-                predicted_class, confidence = predict(img)
+        try:
+            if sample_choice == "📦 Mixed Batch":
+                results = []
+                for path in sample_map.values():
+                    img = load_image(path)
+                    predicted_class, confidence = predict(img)
+                    rec = get_recommendation(predicted_class, confidence)
+                    results.append({"image": img, "ripeness": predicted_class, "confidence": confidence, **rec})
+
+                st.markdown(f"### Batch Summary — {len(results)} bananas scanned")
+                counts = Counter(r["ripeness"] for r in results)
+                cols = st.columns(len(counts))
+                stage_emoji = {"unripe": "🟢", "ripe": "🟡", "overripe": "🟠", "rotten": "🔴"}
+                for col, (k, v) in zip(cols, counts.items()):
+                    with col:
+                        st.metric(f"{stage_emoji.get(k, '')} {k.capitalize()}", v)
+
+                st.markdown("### 🚦 Batch Priority Actions")
+                for stage in ["rotten", "overripe", "ripe", "unripe"]:
+                    items = [r for r in results if r["ripeness"] == stage]
+                    if items:
+                        st.write(f"**{len(items)} {stage} banana(s) → {recommendation_rules[stage]['action']}**")
+
+                grid_cols = st.columns(4)
+                for i, r in enumerate(results):
+                    with grid_cols[i]:
+                        st.image(r["image"], width="stretch")
+                        st.caption(f"{r['ripeness'].upper()} ({r['confidence']:.0f}%)")
+
+            else:
+                img_path = sample_map[sample_choice]
+                image = load_image(img_path)
+                st.image(image, caption="Sample photo", width="stretch")
+
+                predicted_class, confidence = predict(image)
                 rec = get_recommendation(predicted_class, confidence)
-                results.append({"image": img, "ripeness": predicted_class, "confidence": confidence, **rec})
+                render_result_card(predicted_class, confidence, rec)
 
-            st.markdown(f"### Batch Summary — {len(results)} bananas scanned")
-            from collections import Counter
-            counts = Counter(r["ripeness"] for r in results)
-            cols = st.columns(len(counts))
-            stage_emoji = {"unripe": "🟢", "ripe": "🟡", "overripe": "🟠", "rotten": "🔴"}
-            for col, (k, v) in zip(cols, counts.items()):
-                with col:
-                    st.metric(f"{stage_emoji.get(k, '')} {k.capitalize()}", v)
+        except FileNotFoundError:
+            st.error(
+                "⚠️ Demo sample images weren't found on this deployment. "
+                "Make sure the `samples/` folder (unripe.jpg, ripe.jpg, overripe.jpg, rotten.jpg) "
+                "is uploaded alongside app.py."
+            )
 
-            st.markdown("### 🚦 Batch Priority Actions")
-            for stage in ["rotten", "overripe", "ripe", "unripe"]:
-                items = [r for r in results if r["ripeness"] == stage]
-                if items:
-                    st.write(f"**{len(items)} {stage} banana(s) → {recommendation_rules[stage]['action']}**")
-
-            grid_cols = st.columns(4)
-            for i, r in enumerate(results):
-                with grid_cols[i]:
-                    st.image(r["image"], width="stretch")
-                    st.caption(f"{r['ripeness'].upper()} ({r['confidence']:.0f}%)")
-
-        else:
-            img_path = sample_map[sample_choice]
-            image = Image.open(img_path).convert("RGB")
-            st.image(image, caption="Sample photo", width="stretch")
-
-            predicted_class, confidence = predict(image)
-            rec = get_recommendation(predicted_class, confidence)
-
-            st.subheader(f"Ripeness: {predicted_class.upper()}")
-            st.write(f"**AI Confidence:** {confidence:.1f}%")
-            emoji = urgency_colors.get(rec["urgency"], "")
-            col1, col2 = st.columns(2)
-            with col1:
-                st.metric("Decision Class", rec["grade"])
-            with col2:
-                st.metric("Urgency", f"{emoji} {rec['urgency']}")
-            st.write(f"**Status:** {rec['status']}")
-            st.write(f"**Recommended Action:** {rec['action']}")
-            st.write(f"**Reason:** {rec['reason']}")
-
-    elif mode == "📚 Learn":
+    # ---------- Learn ----------
+    with tab_learn:
         st.subheader("📚 Learn About BanaVey")
 
         st.markdown("### 🍌 Why Bananas?")
@@ -394,7 +544,7 @@ else:
         st.markdown("---")
         st.markdown("### 🤖 What Does BanaVey Do?")
         st.markdown("""
-        <div style="text-align: center; font-size: 1.1rem; line-height: 2.2;">
+        <div class="bv-card" style="text-align: center; font-size: 1.1rem; line-height: 2.2;">
         📷 <b>Photo of a banana</b><br>↓<br>
         🤖 <b>AI Classification</b> (ripeness stage)<br>↓<br>
         🏷️ <b>Decision Class</b> (A/B/C/D)<br>↓<br>
@@ -415,3 +565,5 @@ else:
 
         st.markdown("---")
         st.caption("BanaVey was built to reduce post-harvest banana waste in Jalgaon's supply chain using AI-based decision support.")
+
+    st.markdown('<div class="bv-footer">🍌 BanaVey AI · Mind Spring Exhibition · 5 October 2026</div>', unsafe_allow_html=True)
