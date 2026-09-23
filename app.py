@@ -70,6 +70,21 @@ def play_success_feedback(toast_text="Scan complete!", play_sound=True):
     st.toast(toast_text, icon="🍌")
 
 
+def is_new_scan(signature_key, signature_value):
+    """
+    Streamlit reruns the whole script on almost any interaction (switching tabs,
+    clicking any button), and a file_uploader/camera_input widget keeps returning
+    its last value across those reruns. Without this check, a prediction (and its
+    sound/toast) would re-fire on every unrelated rerun, not just on a real new scan.
+    Returns True only the first time a given signature is seen.
+    """
+    last_seen = st.session_state.get(signature_key)
+    if last_seen == signature_value:
+        return False
+    st.session_state[signature_key] = signature_value
+    return True
+
+
 def show_passport_view(params):
     st.markdown("""
     <div class="bv-card" style="border: 2px solid #f9d71c;">
@@ -412,7 +427,9 @@ else:
                 predicted_class, confidence = predict(image)
                 rec = get_recommendation(predicted_class, confidence)
 
-            play_success_feedback(f"Scan complete — {predicted_class.upper()}")
+            file_sig = (uploaded_file.name, uploaded_file.size, input_mode)
+            if is_new_scan("single_scan_sig", file_sig):
+                play_success_feedback(f"Scan complete — {predicted_class.upper()}")
             render_result_card(predicted_class, confidence, rec)
 
             st.markdown("---")
@@ -471,7 +488,9 @@ else:
                         **rec
                     })
 
-            play_success_feedback(f"Batch complete — {len(results)} banana(s) scanned")
+            batch_sig = tuple((f.name, f.size) for f in uploaded_files)
+            if is_new_scan("batch_scan_sig", batch_sig):
+                play_success_feedback(f"Batch complete — {len(results)} banana(s) scanned")
             st.markdown(f"### Batch Summary — {len(results)} bananas scanned")
 
             counts = Counter()
@@ -547,7 +566,8 @@ else:
                     rec = get_recommendation(predicted_class, confidence)
                     results.append({"image": img, "ripeness": predicted_class, "confidence": confidence, **rec})
 
-                play_success_feedback(f"Batch complete — {len(results)} banana(s) scanned")
+                if is_new_scan("demo_mixed_batch_sig", "mixed_batch"):
+                    play_success_feedback(f"Batch complete — {len(results)} banana(s) scanned")
                 st.markdown(f"### Batch Summary — {len(results)} bananas scanned")
                 counts = Counter(r["ripeness"] for r in results)
                 cols = st.columns(len(counts))
@@ -575,7 +595,8 @@ else:
 
                 predicted_class, confidence = predict(image)
                 rec = get_recommendation(predicted_class, confidence)
-                play_success_feedback(f"Scan complete — {predicted_class.upper()}")
+                if is_new_scan("demo_single_sig", sample_choice):
+                    play_success_feedback(f"Scan complete — {predicted_class.upper()}")
                 render_result_card(predicted_class, confidence, rec)
 
         except FileNotFoundError:
