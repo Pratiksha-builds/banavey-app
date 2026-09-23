@@ -154,8 +154,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 
-
-mode = st.radio("Choose mode:", ["📷 Single Scan", "📦 Batch Scan"], horizontal=True)
+mode = st.radio("Choose mode:", ["📷 Single Scan", "📦 Batch Scan", "🎪 Exhibition Demo"], horizontal=True)
 
 query_params = st.query_params
 if "batch_id" in query_params:
@@ -231,8 +230,7 @@ if mode == "📷 Single Scan":
             st.caption(f"Or visit: {passport_url}")
 
 
-
-else:  # Batch Scan
+elif mode == "📦 Batch Scan":  # Batch Scan
     st.subheader("📦 Batch Scanner")
     st.write("Upload several banana photos at once to see the whole batch's condition and priority actions.")
 
@@ -291,3 +289,70 @@ else:  # Batch Scan
                 with grid_cols[i % 4]:
                     st.image(r["image"], width="stretch")
                     st.caption(f"{r['ripeness'].upper()} ({r['confidence']:.0f}%)")
+
+
+
+elif mode == "🎪 Exhibition Demo":   # Demo section
+    st.subheader("🎪 Exhibition Demo")
+    st.write("Choose a prepared sample to instantly see BanaVey's full analysis.")
+
+    sample_choice = st.radio(
+        "Choose a sample:",
+        ["🟢 Unripe Banana", "🟡 Ripe Banana", "🟠 Overripe Banana", "🔴 Rotten Banana", "📦 Mixed Batch"]
+    )
+
+    sample_map = {
+        "🟢 Unripe Banana": "samples/unripe.jpg",
+        "🟡 Ripe Banana": "samples/ripe.jpg",
+        "🟠 Overripe Banana": "samples/overripe.jpg",
+        "🔴 Rotten Banana": "samples/rotten.jpg",
+    }
+
+    if sample_choice == "📦 Mixed Batch":
+        results = []
+        for path in sample_map.values():
+            img = Image.open(path).convert("RGB")
+            predicted_class, confidence = predict(img)
+            rec = get_recommendation(predicted_class, confidence)
+            results.append({"image": img, "ripeness": predicted_class, "confidence": confidence, **rec})
+
+        st.markdown(f"### Batch Summary — {len(results)} bananas scanned")
+        from collections import Counter
+        counts = Counter(r["ripeness"] for r in results)
+        cols = st.columns(len(counts))
+        stage_emoji = {"unripe": "🟢", "ripe": "🟡", "overripe": "🟠", "rotten": "🔴"}
+        for col, (k, v) in zip(cols, counts.items()):
+            with col:
+                st.metric(f"{stage_emoji.get(k, '')} {k.capitalize()}", v)
+
+        st.markdown("### 🚦 Batch Priority Actions")
+        for stage in ["rotten", "overripe", "ripe", "unripe"]:
+            items = [r for r in results if r["ripeness"] == stage]
+            if items:
+                st.write(f"**{len(items)} {stage} banana(s) → {recommendation_rules[stage]['action']}**")
+
+        grid_cols = st.columns(4)
+        for i, r in enumerate(results):
+            with grid_cols[i]:
+                st.image(r["image"], width="stretch")
+                st.caption(f"{r['ripeness'].upper()} ({r['confidence']:.0f}%)")
+
+    else:
+        img_path = sample_map[sample_choice]
+        image = Image.open(img_path).convert("RGB")
+        st.image(image, caption="Sample photo", width="stretch")
+
+        predicted_class, confidence = predict(image)
+        rec = get_recommendation(predicted_class, confidence)
+
+        st.subheader(f"Ripeness: {predicted_class.upper()}")
+        st.write(f"**AI Confidence:** {confidence:.1f}%")
+        emoji = urgency_colors.get(rec["urgency"], "")
+        col1, col2 = st.columns(2)
+        with col1:
+            st.metric("Decision Class", rec["grade"])
+        with col2:
+            st.metric("Urgency", f"{emoji} {rec['urgency']}")
+        st.write(f"**Status:** {rec['status']}")
+        st.write(f"**Recommended Action:** {rec['action']}")
+        st.write(f"**Reason:** {rec['reason']}")
