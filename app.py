@@ -349,13 +349,23 @@ else:
     </div>
     """, unsafe_allow_html=True)
 
-    tab_single, tab_batch, tab_demo, tab_learn = st.tabs(
-        ["📷 Single Scan", "📦 Batch Scan", "🎪 Exhibition Demo", "📚 Learn"]
+    tab_single, tab_batch, tab_demo, tab_impact, tab_learn = st.tabs(
+        ["📷 Single Scan", "📦 Batch Scan", "🎪 Exhibition Demo", "💰 Impact Calculator", "📚 Learn"]
     )
 
     # ---------- Single Scan ----------
     with tab_single:
-        uploaded_file = st.file_uploader("Choose a banana photo", type=["jpg", "jpeg", "png"], key="single")
+        input_mode = st.radio(
+            "How do you want to provide the photo?",
+            ["📁 Upload Photo", "📷 Use Camera"],
+            horizontal=True,
+            key="single_input_mode"
+        )
+
+        if input_mode == "📁 Upload Photo":
+            uploaded_file = st.file_uploader("Choose a banana photo", type=["jpg", "jpeg", "png"], key="single")
+        else:
+            uploaded_file = st.camera_input("Point your camera at a banana and capture", key="single_camera")
 
         if uploaded_file is not None:
             image = load_image(uploaded_file)
@@ -532,6 +542,72 @@ else:
                 "⚠️ Demo sample images weren't found on this deployment. "
                 "Make sure the `samples/` folder (unripe.jpg, ripe.jpg, overripe.jpg, rotten.jpg) "
                 "is uploaded alongside app.py."
+            )
+
+    # ---------- Impact Calculator ----------
+    with tab_impact:
+        st.subheader("💰 Impact Calculator")
+        st.write(
+            "Estimate the value BanaVey-style routing could recover for a banana operation — "
+            "a mandi, a trader, or a cooperative. Adjust the numbers to match a real or hypothetical scale."
+        )
+        st.caption(
+            "⚠️ This is an illustrative estimate built from the numbers you enter below — "
+            "not a measured or published statistic. Edit any field to match your own scenario."
+        )
+
+        with st.form("impact_form"):
+            col_a, col_b = st.columns(2)
+            with col_a:
+                daily_volume_kg = st.number_input(
+                    "Bananas handled per day (kg)", min_value=0.0, value=1000.0, step=50.0
+                )
+                price_per_kg = st.number_input(
+                    "Average market price (₹ / kg)", min_value=0.0, value=15.0, step=1.0
+                )
+            with col_b:
+                current_waste_pct = st.slider(
+                    "Estimated waste WITHOUT AI-assisted routing (%)", 0, 60, 20
+                )
+                waste_reduction_pct = st.slider(
+                    "Expected waste reduction WITH BanaVey (percentage points)", 0, current_waste_pct, 8
+                )
+            submitted = st.form_submit_button("📊 Calculate Impact")
+
+        if submitted or "impact_calculated" in st.session_state:
+            st.session_state.impact_calculated = True
+
+            new_waste_pct = max(current_waste_pct - waste_reduction_pct, 0)
+            waste_before_kg = daily_volume_kg * (current_waste_pct / 100)
+            waste_after_kg = daily_volume_kg * (new_waste_pct / 100)
+            kg_saved_per_day = max(waste_before_kg - waste_after_kg, 0)
+            value_saved_per_day = kg_saved_per_day * price_per_kg
+            value_saved_per_year = value_saved_per_day * 365
+
+            st.markdown("### 📈 Estimated Results")
+            c1, c2, c3 = st.columns(3)
+            with c1:
+                st.metric("Waste Reduced / Day", f"{kg_saved_per_day:,.0f} kg")
+            with c2:
+                st.metric("Value Recovered / Day", f"₹{value_saved_per_day:,.0f}")
+            with c3:
+                st.metric("Value Recovered / Year", f"₹{value_saved_per_year:,.0f}")
+
+            st.markdown(f"""
+            <div class="bv-card">
+                <p style="margin:4px 0;">Without AI-assisted routing, an estimated <b>{current_waste_pct}%</b>
+                of a {daily_volume_kg:,.0f} kg/day operation goes to waste — about
+                <b>{waste_before_kg:,.0f} kg/day</b>.</p>
+                <p style="margin:4px 0;">With BanaVey-style ripeness detection and routing, waste could drop to
+                roughly <b>{new_waste_pct}%</b>, recovering an estimated
+                <b>{kg_saved_per_day:,.0f} kg/day (₹{value_saved_per_day:,.0f}/day)</b> that would otherwise
+                have been lost.</p>
+            </div>
+            """, unsafe_allow_html=True)
+
+            st.caption(
+                "Note: These figures are calculated directly from the inputs above using a simple assumption "
+                "(waste % × volume × price). They illustrate the scale of impact possible, not a verified field measurement."
             )
 
     # ---------- Learn ----------
