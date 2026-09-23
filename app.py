@@ -9,6 +9,10 @@ import urllib.parse
 from datetime import datetime
 import csv
 from collections import Counter
+import base64
+import wave
+import struct
+import math
 
 
 def generate_passport_qr(data_dict):
@@ -31,6 +35,39 @@ def load_image(file_or_path):
     img = Image.open(file_or_path)
     img = ImageOps.exif_transpose(img)
     return img.convert("RGB")
+
+
+@st.cache_resource
+def generate_beep_wav_base64():
+    """Generate a tiny, pleasant two-tone 'ding' sound, base64-encoded, no external files needed."""
+    sample_rate = 44100
+    notes = [(880, 0.09), (1320, 0.14)]  # (frequency Hz, duration s)
+    buf = BytesIO()
+    with wave.open(buf, "wb") as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)
+        wf.setframerate(sample_rate)
+        frames = bytearray()
+        for freq, dur in notes:
+            n_samples = int(sample_rate * dur)
+            for i in range(n_samples):
+                t = i / sample_rate
+                fade = min(1.0, (n_samples - i) / (sample_rate * 0.03))  # quick fade-out
+                sample = 0.25 * fade * math.sin(2 * math.pi * freq * t)
+                frames += struct.pack("<h", int(sample * 32767))
+        wf.writeframes(bytes(frames))
+    return base64.b64encode(buf.getvalue()).decode("utf-8")
+
+
+def play_success_feedback(toast_text="Scan complete!", play_sound=True):
+    """Small audio 'ding' + toast popup on a completed scan — makes the app feel alive."""
+    if play_sound:
+        b64_audio = generate_beep_wav_base64()
+        st.markdown(
+            f'<audio autoplay style="display:none;"><source src="data:audio/wav;base64,{b64_audio}" type="audio/wav"></audio>',
+            unsafe_allow_html=True
+        )
+    st.toast(toast_text, icon="🍌")
 
 
 def show_passport_view(params):
@@ -375,6 +412,7 @@ else:
                 predicted_class, confidence = predict(image)
                 rec = get_recommendation(predicted_class, confidence)
 
+            play_success_feedback(f"Scan complete — {predicted_class.upper()}")
             render_result_card(predicted_class, confidence, rec)
 
             st.markdown("---")
@@ -433,6 +471,7 @@ else:
                         **rec
                     })
 
+            play_success_feedback(f"Batch complete — {len(results)} banana(s) scanned")
             st.markdown(f"### Batch Summary — {len(results)} bananas scanned")
 
             counts = Counter()
@@ -508,6 +547,7 @@ else:
                     rec = get_recommendation(predicted_class, confidence)
                     results.append({"image": img, "ripeness": predicted_class, "confidence": confidence, **rec})
 
+                play_success_feedback(f"Batch complete — {len(results)} banana(s) scanned")
                 st.markdown(f"### Batch Summary — {len(results)} bananas scanned")
                 counts = Counter(r["ripeness"] for r in results)
                 cols = st.columns(len(counts))
@@ -535,6 +575,7 @@ else:
 
                 predicted_class, confidence = predict(image)
                 rec = get_recommendation(predicted_class, confidence)
+                play_success_feedback(f"Scan complete — {predicted_class.upper()}")
                 render_result_card(predicted_class, confidence, rec)
 
         except FileNotFoundError:
@@ -609,6 +650,21 @@ else:
                 "Note: These figures are calculated directly from the inputs above using a simple assumption "
                 "(waste % × volume × price). They illustrate the scale of impact possible, not a verified field measurement."
             )
+
+            with st.expander("ℹ️ Why these default numbers?"):
+                st.write(
+                    "The default values (1000 kg/day, ₹15/kg, 20% waste) are **starting-point assumptions**, "
+                    "not figures pulled from a specific published study. Post-harvest fruit and vegetable loss "
+                    "in India is widely discussed as a significant problem, but the exact percentage varies a "
+                    "lot by crop, region, season, and how 'waste' is measured — so rather than quote one number "
+                    "as fact, BanaVey lets you plug in whatever figures fit the scenario you're presenting."
+                )
+                st.write(
+                    "**For your presentation:** if you have access to real numbers — from a local mandi, a "
+                    "cooperative, or a market report — swap them in here and the calculation updates instantly. "
+                    "That's a stronger, more defensible answer than a fixed statistic if a judge asks where "
+                    "the number came from."
+                )
 
     # ---------- Learn ----------
     with tab_learn:
