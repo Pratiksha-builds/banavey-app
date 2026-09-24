@@ -236,6 +236,58 @@ def load_model():
 
 model = load_model()
 
+
+@st.cache_resource
+def load_banana_checker():
+    """A general-purpose ImageNet model, used only to sanity-check that the
+    photo actually contains a banana before trusting the ripeness model.
+    Returns None if it can't be loaded (e.g. no network for the weights
+    download, memory limit) — callers must handle that gracefully."""
+    try:
+        return tf.keras.applications.MobileNetV2(weights="imagenet")
+    except Exception:
+        return None
+
+
+def is_probably_banana(img, min_prob=0.04):
+    """
+    BanaVey's own model was trained only to judge ripeness — it has no concept
+    of 'this isn't a banana at all' and will confidently force ANY image into
+    one of its four classes. This runs a quick check against a general-purpose
+    ImageNet model first, so we can warn the user instead of silently giving a
+    confident-but-meaningless verdict on a hand, a lemon, a wall, etc.
+    Returns (looks_like_banana: bool, top_guess_label: str, banana_probability: float).
+
+    Safety net: if this check fails for ANY reason (model couldn't load, memory
+    limit, network hiccup downloading weights, etc.), we skip the warning rather
+    than let it break the core ripeness scan — that scan must always keep working.
+    """
+    try:
+        checker = load_banana_checker()
+        if checker is None:
+            return True, "unknown", 1.0
+        img_r = img.resize((224, 224))
+        arr = tf.keras.utils.img_to_array(img_r)
+        arr = np.expand_dims(arr, axis=0)
+        arr = tf.keras.applications.mobilenet_v2.preprocess_input(arr)
+        preds = checker.predict(arr, verbose=0)
+        decoded = tf.keras.applications.mobilenet_v2.decode_predictions(preds, top=5)[0]
+
+        top_label = decoded[0][1].replace("_", " ")
+        banana_prob = 0.0
+        for (_, label, prob) in decoded:
+            if label == "banana":
+                banana_prob = float(prob)
+                break
+
+        return banana_prob >= min_prob, top_label, banana_prob
+
+    except Exception:
+        # Checker unavailable for any reason — treat as "unknown", don't warn,
+        # and let the main ripeness scan proceed exactly as it always has.
+        return True, "unknown", 1.0
+
+
 class_names = ['overripe', 'ripe', 'rotten', 'unripe']
 
 recommendation_rules = {
@@ -424,8 +476,16 @@ else:
             st.image(image, caption="Uploaded photo", width="stretch")
 
             with st.spinner("Analyzing..."):
+                looks_like_banana, top_guess, banana_prob = is_probably_banana(image)
                 predicted_class, confidence = predict(image)
                 rec = get_recommendation(predicted_class, confidence)
+
+            if not looks_like_banana:
+                st.warning(
+                    f"⚠️ This doesn't look like a banana to BanaVey (it looks more like **{top_guess}**). "
+                    "The ripeness verdict below was still generated, but it isn't meaningful for a "
+                    "non-banana photo — please try again with a clear photo of a banana."
+                )
 
             file_sig = (uploaded_file.name, uploaded_file.size, input_mode)
             if is_new_scan("single_scan_sig", file_sig):
@@ -480,17 +540,28 @@ else:
             with st.spinner(f"Analyzing {len(uploaded_files)} bananas..."):
                 for f in uploaded_files:
                     img = load_image(f)
+                    looks_like_banana, top_guess, banana_prob = is_probably_banana(img)
                     predicted_class, confidence = predict(img)
                     rec = get_recommendation(predicted_class, confidence)
                     results.append({
                         "filename": f.name, "image": img,
                         "ripeness": predicted_class, "confidence": confidence,
+                        "looks_like_banana": looks_like_banana, "top_guess": top_guess,
                         **rec
                     })
 
             batch_sig = tuple((f.name, f.size) for f in uploaded_files)
             if is_new_scan("batch_scan_sig", batch_sig):
                 play_success_feedback(f"Batch complete — {len(results)} banana(s) scanned")
+
+            non_banana_items = [r for r in results if not r["looks_like_banana"]]
+            if non_banana_items:
+                names = ", ".join(f"**{r['filename']}** (looks like {r['top_guess']})" for r in non_banana_items)
+                st.warning(
+                    f"⚠️ {len(non_banana_items)} photo(s) don't look like bananas to BanaVey: {names}. "
+                    "Their ripeness verdicts below aren't meaningful — consider removing them and re-uploading."
+                )
+
             st.markdown(f"### Batch Summary — {len(results)} bananas scanned")
 
             counts = Counter()
@@ -537,7 +608,10 @@ else:
                 for i, r in enumerate(results):
                     with grid_cols[i % 4]:
                         st.image(r["image"], width="stretch")
-                        st.caption(f"{r['ripeness'].upper()} ({r['confidence']:.0f}%)")
+                        if r["looks_like_banana"]:
+                            st.caption(f"{r['ripeness'].upper()} ({r['confidence']:.0f}%)")
+                        else:
+                            st.caption(f"⚠️ Not a banana? (looks like {r['top_guess']})")
 
     # ---------- Exhibition Demo ----------
     with tab_demo:
