@@ -542,12 +542,13 @@ else:
     # ---------- Exhibition Demo ----------
     with tab_demo:
         st.subheader("🎪 Exhibition Demo")
-        st.write("Choose a prepared sample to instantly see BanaVey's full analysis.")
+        st.write("Choose a prepared sample, then analyze it to see BanaVey's full analysis.")
 
         sample_choice = st.radio(
             "Choose a sample:",
             ["🟢 Unripe Banana", "🟡 Ripe Banana", "🟠 Overripe Banana", "🔴 Rotten Banana", "📦 Mixed Batch"],
-            horizontal=True
+            horizontal=True,
+            key="demo_sample_choice"
         )
 
         sample_map = {
@@ -557,54 +558,64 @@ else:
             "🔴 Rotten Banana": "samples/rotten.jpg",
         }
 
-        try:
-            if sample_choice == "📦 Mixed Batch":
-                results = []
-                for path in sample_map.values():
-                    img = load_image(path)
-                    predicted_class, confidence = predict(img)
+        analyze_clicked = st.button("🔍 Analyze This Sample", key="demo_analyze_btn")
+        if analyze_clicked:
+            st.session_state.demo_last_analyzed = sample_choice
+
+        # Only run prediction when the user has explicitly clicked Analyze for the
+        # currently-selected sample. st.tabs() runs every tab's code on every rerun
+        # (even tabs you're not looking at), so without this gate, this tab would
+        # silently re-predict — and replay the sound/toast — on unrelated clicks
+        # anywhere else in the app.
+        if st.session_state.get("demo_last_analyzed") == sample_choice:
+            try:
+                if sample_choice == "📦 Mixed Batch":
+                    results = []
+                    for path in sample_map.values():
+                        img = load_image(path)
+                        predicted_class, confidence = predict(img)
+                        rec = get_recommendation(predicted_class, confidence)
+                        results.append({"image": img, "ripeness": predicted_class, "confidence": confidence, **rec})
+
+                    if analyze_clicked:
+                        play_success_feedback(f"Batch complete — {len(results)} banana(s) scanned")
+                    st.markdown(f"### Batch Summary — {len(results)} bananas scanned")
+                    counts = Counter(r["ripeness"] for r in results)
+                    cols = st.columns(len(counts))
+                    stage_emoji = {"unripe": "🟢", "ripe": "🟡", "overripe": "🟠", "rotten": "🔴"}
+                    for col, (k, v) in zip(cols, counts.items()):
+                        with col:
+                            st.metric(f"{stage_emoji.get(k, '')} {k.capitalize()}", v)
+
+                    st.markdown("### 🚦 Batch Priority Actions")
+                    for stage in ["rotten", "overripe", "ripe", "unripe"]:
+                        items = [r for r in results if r["ripeness"] == stage]
+                        if items:
+                            st.write(f"**{len(items)} {stage} banana(s) → {recommendation_rules[stage]['action']}**")
+
+                    grid_cols = st.columns(4)
+                    for i, r in enumerate(results):
+                        with grid_cols[i]:
+                            st.image(r["image"], width="stretch")
+                            st.caption(f"{r['ripeness'].upper()} ({r['confidence']:.0f}%)")
+
+                else:
+                    img_path = sample_map[sample_choice]
+                    image = load_image(img_path)
+                    st.image(image, caption="Sample photo", width="stretch")
+
+                    predicted_class, confidence = predict(image)
                     rec = get_recommendation(predicted_class, confidence)
-                    results.append({"image": img, "ripeness": predicted_class, "confidence": confidence, **rec})
+                    if analyze_clicked:
+                        play_success_feedback(f"Scan complete — {predicted_class.upper()}")
+                    render_result_card(predicted_class, confidence, rec)
 
-                if is_new_scan("demo_mixed_batch_sig", "mixed_batch"):
-                    play_success_feedback(f"Batch complete — {len(results)} banana(s) scanned")
-                st.markdown(f"### Batch Summary — {len(results)} bananas scanned")
-                counts = Counter(r["ripeness"] for r in results)
-                cols = st.columns(len(counts))
-                stage_emoji = {"unripe": "🟢", "ripe": "🟡", "overripe": "🟠", "rotten": "🔴"}
-                for col, (k, v) in zip(cols, counts.items()):
-                    with col:
-                        st.metric(f"{stage_emoji.get(k, '')} {k.capitalize()}", v)
-
-                st.markdown("### 🚦 Batch Priority Actions")
-                for stage in ["rotten", "overripe", "ripe", "unripe"]:
-                    items = [r for r in results if r["ripeness"] == stage]
-                    if items:
-                        st.write(f"**{len(items)} {stage} banana(s) → {recommendation_rules[stage]['action']}**")
-
-                grid_cols = st.columns(4)
-                for i, r in enumerate(results):
-                    with grid_cols[i]:
-                        st.image(r["image"], width="stretch")
-                        st.caption(f"{r['ripeness'].upper()} ({r['confidence']:.0f}%)")
-
-            else:
-                img_path = sample_map[sample_choice]
-                image = load_image(img_path)
-                st.image(image, caption="Sample photo", width="stretch")
-
-                predicted_class, confidence = predict(image)
-                rec = get_recommendation(predicted_class, confidence)
-                if is_new_scan("demo_single_sig", sample_choice):
-                    play_success_feedback(f"Scan complete — {predicted_class.upper()}")
-                render_result_card(predicted_class, confidence, rec)
-
-        except FileNotFoundError:
-            st.error(
-                "⚠️ Demo sample images weren't found on this deployment. "
-                "Make sure the `samples/` folder (unripe.jpg, ripe.jpg, overripe.jpg, rotten.jpg) "
-                "is uploaded alongside app.py."
-            )
+            except FileNotFoundError:
+                st.error(
+                    "⚠️ Demo sample images weren't found on this deployment. "
+                    "Make sure the `samples/` folder (unripe.jpg, ripe.jpg, overripe.jpg, rotten.jpg) "
+                    "is uploaded alongside app.py."
+                )
 
     # ---------- Impact Calculator ----------
     with tab_impact:
