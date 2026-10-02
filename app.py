@@ -16,10 +16,13 @@ import math
 from PIL import ImageDraw, ImageFont
 
 try:
-    from ultralytics import YOLO
-    ULTRALYTICS_AVAILABLE = True
+    import cv2
+    from scipy import ndimage as ndi
+    from skimage.feature import peak_local_max
+    from skimage.segmentation import watershed as sk_watershed
+    CV_DETECTION_AVAILABLE = True
 except ImportError:
-    ULTRALYTICS_AVAILABLE = False
+    CV_DETECTION_AVAILABLE = False
 
 
 def generate_passport_qr(data_dict):
@@ -354,49 +357,76 @@ def predict(img):
 
 
 # ---------------- Bunch / Stalk Scan ----------------
-# One photo of several bananas together -> detect each individual banana
-# (using a general-purpose, pretrained object detector that already knows
-# what a banana looks like, zero extra training needed) -> crop each one out
-# -> run it through the SAME ripeness model used everywhere else in the app.
+# One photo of several bananas together -> find each individual banana in the
+# photo -> crop each one out -> run it through the SAME ripeness model used
+# everywhere else in the app.
+#
+# This uses classical computer vision (no deep learning, no second framework,
+# no model download) to separate bananas from the background and from each
+# other: it estimates the background color from the photo's corners, finds
+# everything that isn't background, then uses a "watershed" split to separate
+# touching/overlapping bananas into individual regions. Works best with
+# bananas laid on a plain, reasonably contrasting surface — the same setup
+# as your existing sample photos.
 
-@st.cache_resource
-def load_bunch_detector():
-    """Pretrained YOLOv8 object detector (trained on COCO, which already
-    includes a 'banana' class). Returns None if it can't be loaded, so the
-    Bunch Scan tab can fail gracefully instead of crashing the whole app."""
-    if not ULTRALYTICS_AVAILABLE:
-        return None
-    try:
-        return YOLO("yolov8n.pt")
-    except Exception:
-        return None
+def _estimate_background_color(img_np):
+    """Sample the four corners of the photo to guess the background color,
+    assuming the bananas are roughly centered and the corners are background."""
+    h, w = img_np.shape[:2]
+    margin = max(5, min(h, w) // 20)
+    corners = np.concatenate([
+        img_np[:margin, :margin].reshape(-1, 3),
+        img_np[:margin, -margin:].reshape(-1, 3),
+        img_np[-margin:, :margin].reshape(-1, 3),
+        img_np[-margin:, -margin:].reshape(-1, 3),
+    ], axis=0)
+    return np.median(corners, axis=0)
 
 
-def detect_bananas_in_image(image, conf_threshold=0.25):
+def detect_bananas_in_image(image, min_area_frac=0.01, min_distance=40):
     """
-    Runs the object detector on a photo and returns a list of bounding boxes
-    for every banana found, sorted left-to-right (so results read naturally).
-    Each item: {"box": (x1, y1, x2, y2), "det_conf": float}.
-    Returns [] if the detector is unavailable or finds nothing — callers must
+    Finds bounding boxes for each individual banana-like object in a photo,
+    sorted left-to-right. Each item: {"box": (x1, y1, x2, y2), "det_conf": float}.
+    Returns [] if detection is unavailable or finds nothing — callers must
     handle that gracefully rather than assume a result.
     """
-    detector = load_bunch_detector()
-    if detector is None:
+    if not CV_DETECTION_AVAILABLE:
         return []
     try:
-        results = detector(image, conf=conf_threshold, verbose=False)
-        r = results[0]
+        img_np = np.array(image.convert("RGB"))
+        h, w = img_np.shape[:2]
+
+        bg_color = _estimate_background_color(img_np)
+        diff = np.linalg.norm(img_np.astype(np.float32) - bg_color.astype(np.float32), axis=2)
+        diff_norm = cv2.normalize(diff, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+        _, fg_mask = cv2.threshold(diff_norm, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+
+        kernel = np.ones((7, 7), np.uint8)
+        fg_mask = cv2.morphologyEx(fg_mask, cv2.MORPH_OPEN, kernel, iterations=2)
+        fg_mask = cv2.morphologyEx(fg_mask, cv2.MORPH_CLOSE, kernel, iterations=2)
+
+        # Split touching/overlapping bananas: find each object's "core" via
+        # distance-from-edge peaks, then grow regions outward from those peaks.
+        dist = ndi.distance_transform_edt(fg_mask)
+        coords = peak_local_max(dist, min_distance=min_distance, labels=fg_mask)
+        peak_mask = np.zeros(dist.shape, dtype=bool)
+        if len(coords) > 0:
+            peak_mask[tuple(coords.T)] = True
+        markers, _ = ndi.label(peak_mask)
+        labels = sk_watershed(-dist, markers, mask=fg_mask)
+
+        min_area = min_area_frac * h * w
         detections = []
-        for box in r.boxes:
-            cls_id = int(box.cls[0])
-            label = r.names[cls_id]
-            if label != "banana":
+        for label_id in range(1, labels.max() + 1):
+            region_mask = (labels == label_id)
+            area = int(region_mask.sum())
+            if area < min_area:
                 continue
-            x1, y1, x2, y2 = box.xyxy[0].tolist()
-            detections.append({
-                "box": (x1, y1, x2, y2),
-                "det_conf": float(box.conf[0])
-            })
+            ys, xs = np.where(region_mask)
+            x1, x2 = float(xs.min()), float(xs.max())
+            y1, y2 = float(ys.min()), float(ys.max())
+            detections.append({"box": (x1, y1, x2, y2), "det_conf": 1.0})
+
         detections.sort(key=lambda d: (d["box"][0] + d["box"][2]) / 2)  # left to right
         return detections
     except Exception:
@@ -629,16 +659,17 @@ else:
             "No need to photograph them one by one."
         )
         st.caption(
-            "ℹ️ Works best when bananas are reasonably visible, not completely hidden behind "
-            "each other. In a very tightly packed bunch, a few deeply buried bananas may be missed — "
-            "the summary below will always say exactly how many were detected."
+            "ℹ️ Works best with bananas laid on a plain, reasonably contrasting background "
+            "(like a table, sheet, or tray) — similar to the sample photos used elsewhere in this "
+            "app. In a very tightly packed bunch, a couple of deeply overlapping bananas may be "
+            "merged or missed — the summary below will always say exactly how many were detected."
         )
 
-        if not ULTRALYTICS_AVAILABLE or load_bunch_detector() is None:
+        if not CV_DETECTION_AVAILABLE:
             st.error(
-                "⚠️ Bunch Scan isn't available on this deployment right now — the detection "
-                "component couldn't load (it may be missing from requirements.txt, or the "
-                "download failed). Single Scan and Batch Scan are unaffected and work normally."
+                "⚠️ Bunch Scan isn't available on this deployment right now — required packages "
+                "(opencv-python-headless, scipy, scikit-image) may be missing from requirements.txt. "
+                "Single Scan and Batch Scan are unaffected and work normally."
             )
         else:
             bunch_file = st.file_uploader(
