@@ -3,4 +3,6 @@ tensorflow
 numpy
 pillow
 qrcode[pil]
-ultralytics
+opencv-python-headless
+scipy
+scikit-image
