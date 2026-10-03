@@ -385,10 +385,12 @@ def _estimate_background_color(img_np):
 
 def detect_bananas_in_image(image, min_area_frac=0.01, min_distance=40):
     """
-    Finds bounding boxes for each individual banana-like object in a photo,
-    sorted left-to-right. Each item: {"box": (x1, y1, x2, y2), "det_conf": float}.
-    Returns [] if detection is unavailable or finds nothing — callers must
-    handle that gracefully rather than assume a result.
+    Finds each individual banana-like region in a photo, sorted left-to-right.
+    Each item: {"box": (x1,y1,x2,y2), "det_conf": float, "mask": bool ndarray
+    same size as the photo, True where this specific banana's pixels are}.
+    The mask (not just the box) is what lets us draw a clean outline instead
+    of overlapping rectangles, and crop each banana without its neighbors
+    bleeding in. Returns [] if detection is unavailable or finds nothing.
     """
     if not CV_DETECTION_AVAILABLE:
         return []
@@ -425,7 +427,7 @@ def detect_bananas_in_image(image, min_area_frac=0.01, min_distance=40):
             ys, xs = np.where(region_mask)
             x1, x2 = float(xs.min()), float(xs.max())
             y1, y2 = float(ys.min()), float(ys.max())
-            detections.append({"box": (x1, y1, x2, y2), "det_conf": 1.0})
+            detections.append({"box": (x1, y1, x2, y2), "det_conf": 1.0, "mask": region_mask})
 
         detections.sort(key=lambda d: (d["box"][0] + d["box"][2]) / 2)  # left to right
         return detections
@@ -436,7 +438,9 @@ def detect_bananas_in_image(image, min_area_frac=0.01, min_distance=40):
 def crop_with_padding(image, box, pad_frac=0.07):
     """Crop a detected banana out of the full photo, with a small margin
     around it so the ripeness classifier sees a bit of context, not a
-    razor-tight crop that might cut off part of the fruit."""
+    razor-tight crop that might cut off part of the fruit. Used for the
+    actual ripeness prediction — a bit of neighboring background/banana in
+    frame doesn't hurt the classifier the way it hurts a clean display crop."""
     x1, y1, x2, y2 = box
     w, h = x2 - x1, y2 - y1
     pad_x, pad_y = w * pad_frac, h * pad_frac
@@ -448,9 +452,25 @@ def crop_with_padding(image, box, pad_frac=0.07):
     return image.crop((left, top, right, bottom))
 
 
+def masked_thumbnail(image, box, mask, pad_frac=0.05, bg_fill=(245, 245, 240)):
+    """
+    A clean DISPLAY crop for 'See individual bananas': pixels that belong to
+    a neighboring banana (outside this banana's own mask) are painted over
+    with a neutral background, so each thumbnail visually isolates just the
+    one banana instead of showing a messy slice of its neighbors too.
+    """
+    img_np = np.array(image.convert("RGB"))
+    fill = np.array(bg_fill, dtype=np.uint8)
+    isolated = np.where(mask[:, :, None], img_np, fill)
+    isolated_img = Image.fromarray(isolated)
+    return crop_with_padding(isolated_img, box, pad_frac=pad_frac)
+
+
 def draw_annotated_bunch_image(image, bunch_results):
-    """Draw a labeled box around each detected banana, colored by ripeness
-    stage, so the bunch photo itself becomes the result — not just a list."""
+    """Outline each detected banana's actual shape (not a rectangle) in a
+    color matching its ripeness stage, so the bunch photo itself becomes the
+    result. Outlining the real shape — instead of a bounding box — avoids the
+    messy overlapping-rectangle look that curved, touching bananas produce."""
     annotated = image.copy()
     draw = ImageDraw.Draw(annotated)
     try:
@@ -463,7 +483,14 @@ def draw_annotated_bunch_image(image, bunch_results):
     for i, r in enumerate(bunch_results, start=1):
         x1, y1, x2, y2 = r["box"]
         color = stage_hex.get(r["ripeness"], "#f9d71c")
-        draw.rectangle([x1, y1, x2, y2], outline=color, width=4)
+
+        mask_u8 = (r["mask"].astype(np.uint8)) * 255
+        contours, _ = cv2.findContours(mask_u8, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        for contour in contours:
+            points = [(int(p[0][0]), int(p[0][1])) for p in contour]
+            if len(points) >= 2:
+                draw.line(points + [points[0]], fill=color, width=4, joint="curve")
+
         label = f"#{i} {r['ripeness'].upper()}"
         text_bbox = draw.textbbox((0, 0), label, font=font)
         tw, th = text_bbox[2] - text_bbox[0], text_bbox[3] - text_bbox[1]
@@ -695,11 +722,16 @@ else:
                     with st.spinner(f"Analyzing {len(detections)} detected banana(s)..."):
                         bunch_results = []
                         for det in detections:
-                            crop = crop_with_padding(bunch_image, det["box"])
-                            predicted_class, confidence = predict(crop)
+                            # The classifier sees a slightly generous rectangular crop
+                            # (a little neighboring context doesn't hurt classification).
+                            classify_crop = crop_with_padding(bunch_image, det["box"])
+                            predicted_class, confidence = predict(classify_crop)
                             rec = get_recommendation(predicted_class, confidence)
+                            # The thumbnail shown to the viewer is masked instead, so
+                            # neighboring bananas don't visually bleed into the crop.
+                            display_crop = masked_thumbnail(bunch_image, det["box"], det["mask"])
                             bunch_results.append({
-                                **det, "image": crop,
+                                **det, "image": display_crop,
                                 "ripeness": predicted_class, "confidence": confidence,
                                 **rec
                             })
@@ -727,14 +759,32 @@ else:
 
                     st.markdown("### 🚦 Bunch Priority Actions")
                     priority_order = ["rotten", "overripe", "ripe", "unripe"]
+                    stage_emoji_single = {"unripe": "🟢", "ripe": "🟡", "overripe": "🟠", "rotten": "🔴"}
                     for stage in priority_order:
                         items = [r for r in bunch_results if r["ripeness"] == stage and r["grade"] != "RECHECK"]
                         if items:
-                            st.write(f"**{len(items)} {stage} banana(s) → {recommendation_rules[stage]['action']}**")
+                            info = recommendation_rules[stage]
+                            avg_conf = sum(x["confidence"] for x in items) / len(items)
+                            st.markdown(f"""
+                            <div class="bv-card" style="padding: 16px 20px; margin-bottom: 10px;">
+                                <p style="margin:2px 0; font-size:1.05rem;">
+                                    {stage_emoji_single.get(stage,'')} <b>{len(items)} {stage} banana(s)</b>
+                                    — avg. confidence {avg_conf:.0f}%
+                                </p>
+                                <p style="margin:2px 0;"><b>Status:</b> {info['status']}</p>
+                                <p style="margin:2px 0;"><b>Recommended Action:</b> {info['action']}</p>
+                                <p style="margin:2px 0; color:#aaa;"><b>Why:</b> {info['reason']}</p>
+                            </div>
+                            """, unsafe_allow_html=True)
 
                     recheck_items = [r for r in bunch_results if r["grade"] == "RECHECK"]
                     if recheck_items:
-                        st.write(f"**{len(recheck_items)} banana(s) need manual recheck** (low AI confidence)")
+                        st.markdown(f"""
+                        <div class="bv-card" style="padding: 16px 20px; margin-bottom: 10px; border-color:#9e9e9e;">
+                            <p style="margin:2px 0; font-size:1.05rem;">⚪ <b>{len(recheck_items)} banana(s) need manual recheck</b></p>
+                            <p style="margin:2px 0; color:#aaa;">AI confidence was too low to trust automatically — worth a quick visual check before routing these.</p>
+                        </div>
+                        """, unsafe_allow_html=True)
 
                     text_buf = __import__("io").StringIO()
                     writer = csv.writer(text_buf)
