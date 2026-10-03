@@ -15,15 +15,6 @@ import struct
 import math
 from PIL import ImageDraw, ImageFont
 
-try:
-    import cv2
-    from scipy import ndimage as ndi
-    from skimage.feature import peak_local_max
-    from skimage.segmentation import watershed as sk_watershed
-    CV_DETECTION_AVAILABLE = True
-except ImportError:
-    CV_DETECTION_AVAILABLE = False
-
 
 def generate_passport_qr(data_dict):
     query_string = urllib.parse.urlencode(data_dict)
@@ -356,149 +347,6 @@ def predict(img):
     return predicted_class, confidence
 
 
-# ---------------- Bunch / Stalk Scan ----------------
-# One photo of several bananas together -> find each individual banana in the
-# photo -> crop each one out -> run it through the SAME ripeness model used
-# everywhere else in the app.
-#
-# This uses classical computer vision (no deep learning, no second framework,
-# no model download) to separate bananas from the background and from each
-# other: it estimates the background color from the photo's corners, finds
-# everything that isn't background, then uses a "watershed" split to separate
-# touching/overlapping bananas into individual regions. Works best with
-# bananas laid on a plain, reasonably contrasting surface — the same setup
-# as your existing sample photos.
-
-def _estimate_background_color(img_np):
-    """Sample the four corners of the photo to guess the background color,
-    assuming the bananas are roughly centered and the corners are background."""
-    h, w = img_np.shape[:2]
-    margin = max(5, min(h, w) // 20)
-    corners = np.concatenate([
-        img_np[:margin, :margin].reshape(-1, 3),
-        img_np[:margin, -margin:].reshape(-1, 3),
-        img_np[-margin:, :margin].reshape(-1, 3),
-        img_np[-margin:, -margin:].reshape(-1, 3),
-    ], axis=0)
-    return np.median(corners, axis=0)
-
-
-def detect_bananas_in_image(image, min_area_frac=0.01, min_distance=40):
-    """
-    Finds each individual banana-like region in a photo, sorted left-to-right.
-    Each item: {"box": (x1,y1,x2,y2), "det_conf": float, "mask": bool ndarray
-    same size as the photo, True where this specific banana's pixels are}.
-    The mask (not just the box) is what lets us draw a clean outline instead
-    of overlapping rectangles, and crop each banana without its neighbors
-    bleeding in. Returns [] if detection is unavailable or finds nothing.
-    """
-    if not CV_DETECTION_AVAILABLE:
-        return []
-    try:
-        img_np = np.array(image.convert("RGB"))
-        h, w = img_np.shape[:2]
-
-        bg_color = _estimate_background_color(img_np)
-        diff = np.linalg.norm(img_np.astype(np.float32) - bg_color.astype(np.float32), axis=2)
-        diff_norm = cv2.normalize(diff, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
-        _, fg_mask = cv2.threshold(diff_norm, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-
-        kernel = np.ones((7, 7), np.uint8)
-        fg_mask = cv2.morphologyEx(fg_mask, cv2.MORPH_OPEN, kernel, iterations=2)
-        fg_mask = cv2.morphologyEx(fg_mask, cv2.MORPH_CLOSE, kernel, iterations=2)
-
-        # Split touching/overlapping bananas: find each object's "core" via
-        # distance-from-edge peaks, then grow regions outward from those peaks.
-        dist = ndi.distance_transform_edt(fg_mask)
-        coords = peak_local_max(dist, min_distance=min_distance, labels=fg_mask)
-        peak_mask = np.zeros(dist.shape, dtype=bool)
-        if len(coords) > 0:
-            peak_mask[tuple(coords.T)] = True
-        markers, _ = ndi.label(peak_mask)
-        labels = sk_watershed(-dist, markers, mask=fg_mask)
-
-        min_area = min_area_frac * h * w
-        detections = []
-        for label_id in range(1, labels.max() + 1):
-            region_mask = (labels == label_id)
-            area = int(region_mask.sum())
-            if area < min_area:
-                continue
-            ys, xs = np.where(region_mask)
-            x1, x2 = float(xs.min()), float(xs.max())
-            y1, y2 = float(ys.min()), float(ys.max())
-            detections.append({"box": (x1, y1, x2, y2), "det_conf": 1.0, "mask": region_mask})
-
-        detections.sort(key=lambda d: (d["box"][0] + d["box"][2]) / 2)  # left to right
-        return detections
-    except Exception:
-        return []
-
-
-def crop_with_padding(image, box, pad_frac=0.07):
-    """Crop a detected banana out of the full photo, with a small margin
-    around it so the ripeness classifier sees a bit of context, not a
-    razor-tight crop that might cut off part of the fruit. Used for the
-    actual ripeness prediction — a bit of neighboring background/banana in
-    frame doesn't hurt the classifier the way it hurts a clean display crop."""
-    x1, y1, x2, y2 = box
-    w, h = x2 - x1, y2 - y1
-    pad_x, pad_y = w * pad_frac, h * pad_frac
-    img_w, img_h = image.size
-    left = max(0, int(x1 - pad_x))
-    top = max(0, int(y1 - pad_y))
-    right = min(img_w, int(x2 + pad_x))
-    bottom = min(img_h, int(y2 + pad_y))
-    return image.crop((left, top, right, bottom))
-
-
-def masked_thumbnail(image, box, mask, pad_frac=0.05, bg_fill=(245, 245, 240)):
-    """
-    A clean DISPLAY crop for 'See individual bananas': pixels that belong to
-    a neighboring banana (outside this banana's own mask) are painted over
-    with a neutral background, so each thumbnail visually isolates just the
-    one banana instead of showing a messy slice of its neighbors too.
-    """
-    img_np = np.array(image.convert("RGB"))
-    fill = np.array(bg_fill, dtype=np.uint8)
-    isolated = np.where(mask[:, :, None], img_np, fill)
-    isolated_img = Image.fromarray(isolated)
-    return crop_with_padding(isolated_img, box, pad_frac=pad_frac)
-
-
-def draw_annotated_bunch_image(image, bunch_results):
-    """Outline each detected banana's actual shape (not a rectangle) in a
-    color matching its ripeness stage, so the bunch photo itself becomes the
-    result. Outlining the real shape — instead of a bounding box — avoids the
-    messy overlapping-rectangle look that curved, touching bananas produce."""
-    annotated = image.copy()
-    draw = ImageDraw.Draw(annotated)
-    try:
-        font = ImageFont.load_default(size=max(14, image.size[0] // 60))
-    except TypeError:
-        font = ImageFont.load_default()
-
-    stage_hex = {"unripe": "#4CAF50", "ripe": "#f9d71c", "overripe": "#ff9800", "rotten": "#e53935"}
-
-    for i, r in enumerate(bunch_results, start=1):
-        x1, y1, x2, y2 = r["box"]
-        color = stage_hex.get(r["ripeness"], "#f9d71c")
-
-        mask_u8 = (r["mask"].astype(np.uint8)) * 255
-        contours, _ = cv2.findContours(mask_u8, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        for contour in contours:
-            points = [(int(p[0][0]), int(p[0][1])) for p in contour]
-            if len(points) >= 2:
-                draw.line(points + [points[0]], fill=color, width=4, joint="curve")
-
-        label = f"#{i} {r['ripeness'].upper()}"
-        text_bbox = draw.textbbox((0, 0), label, font=font)
-        tw, th = text_bbox[2] - text_bbox[0], text_bbox[3] - text_bbox[1]
-        draw.rectangle([x1, max(0, y1 - th - 8), x1 + tw + 10, max(0, y1)], fill=color)
-        draw.text((x1 + 5, max(0, y1 - th - 6)), label, fill="#1a1a2e", font=font)
-
-    return annotated
-
 
 def render_confidence_bar(confidence):
     st.markdown(f"""
@@ -682,128 +530,63 @@ else:
         st.subheader("🍌🍌 Bunch / Stalk Scanner")
         st.write(
             "Upload **one photo** of a bunch, stalk, dozen, or a pile of bananas together — "
-            "BanaVey will find each individual banana in the photo and analyze it separately. "
-            "No need to photograph them one by one."
+            "BanaVey gives you one overall ripeness read and routing recommendation for the "
+            "whole bunch. No need to photograph each banana separately."
         )
         st.caption(
-            "ℹ️ Works best with bananas laid on a plain, reasonably contrasting background "
-            "(like a table, sheet, or tray) — similar to the sample photos used elsewhere in this "
-            "app. In a very tightly packed bunch, a couple of deeply overlapping bananas may be "
-            "merged or missed — the summary below will always say exactly how many were detected."
+            "ℹ️ Bananas on the same bunch are almost always at a similar ripeness stage, so this "
+            "gives you one combined verdict for the group rather than a breakdown of every single "
+            "banana — faster, and more realistic for how bunches are actually bought and sold."
         )
 
-        if not CV_DETECTION_AVAILABLE:
-            st.error(
-                "⚠️ Bunch Scan isn't available on this deployment right now — required packages "
-                "(opencv-python-headless, scipy, scikit-image) may be missing from requirements.txt. "
-                "Single Scan and Batch Scan are unaffected and work normally."
+        bunch_file = st.file_uploader(
+            "Choose a photo of a bunch, stalk, or dozen of bananas",
+            type=["jpg", "jpeg", "png"],
+            key="bunch"
+        )
+
+        if bunch_file is not None:
+            bunch_image = load_image(bunch_file)
+            st.image(bunch_image, caption="Uploaded photo", width="stretch")
+
+            with st.spinner("Analyzing..."):
+                looks_like_banana, top_guess, banana_prob = is_probably_banana(bunch_image)
+                predicted_class, confidence = predict(bunch_image)
+                rec = get_recommendation(predicted_class, confidence)
+
+            if not looks_like_banana:
+                st.warning(
+                    f"⚠️ This doesn't look like a banana bunch to BanaVey (it looks more like "
+                    f"**{top_guess}**). The verdict below was still generated, but it isn't "
+                    "meaningful for a non-banana photo — please try again with a clear photo."
+                )
+
+            bunch_sig = (bunch_file.name, bunch_file.size)
+            if is_new_scan("bunch_scan_sig", bunch_sig):
+                play_success_feedback(f"Bunch complete — {predicted_class.upper()}")
+
+            render_result_card(predicted_class, confidence, rec)
+            st.caption(
+                "This reflects the overall/dominant condition of the bunch as photographed — "
+                "if a few individual bananas look noticeably different from the rest, a quick "
+                "visual check on those is still worthwhile."
             )
-        else:
-            bunch_file = st.file_uploader(
-                "Choose a photo of a bunch, stalk, or dozen of bananas",
-                type=["jpg", "jpeg", "png"],
-                key="bunch"
-            )
 
-            if bunch_file is not None:
-                bunch_image = load_image(bunch_file)
-                st.image(bunch_image, caption="Uploaded photo", width="stretch")
-
-                with st.spinner("Detecting individual bananas..."):
-                    detections = detect_bananas_in_image(bunch_image)
-
-                if not detections:
-                    st.warning(
-                        "⚠️ BanaVey couldn't clearly detect any individual bananas in this photo. "
-                        "Try a photo with better lighting, less overlap between bananas, or a bit "
-                        "more distance so each one is more visible."
-                    )
-                else:
-                    with st.spinner(f"Analyzing {len(detections)} detected banana(s)..."):
-                        bunch_results = []
-                        for det in detections:
-                            # The classifier sees a slightly generous rectangular crop
-                            # (a little neighboring context doesn't hurt classification).
-                            classify_crop = crop_with_padding(bunch_image, det["box"])
-                            predicted_class, confidence = predict(classify_crop)
-                            rec = get_recommendation(predicted_class, confidence)
-                            # The thumbnail shown to the viewer is masked instead, so
-                            # neighboring bananas don't visually bleed into the crop.
-                            display_crop = masked_thumbnail(bunch_image, det["box"], det["mask"])
-                            bunch_results.append({
-                                **det, "image": display_crop,
-                                "ripeness": predicted_class, "confidence": confidence,
-                                **rec
-                            })
-
-                    bunch_sig = (bunch_file.name, bunch_file.size)
-                    if is_new_scan("bunch_scan_sig", bunch_sig):
-                        play_success_feedback(f"Bunch complete — {len(bunch_results)} banana(s) detected")
-
-                    st.markdown(f"### 🔍 Detected {len(bunch_results)} banana(s) in this photo")
-                    annotated_img = draw_annotated_bunch_image(bunch_image, bunch_results)
-                    st.image(annotated_img, caption="Each banana labeled by detected ripeness", width="stretch")
-
-                    counts = Counter()
-                    for r in bunch_results:
-                        if r["grade"] == "RECHECK":
-                            counts["Needs Recheck"] += 1
-                        else:
-                            counts[r["ripeness"]] += 1
-
-                    stage_emoji = {"unripe": "🟢", "ripe": "🟡", "overripe": "🟠", "rotten": "🔴", "Needs Recheck": "⚪"}
-                    cols = st.columns(len(counts))
-                    for col, (k, v) in zip(cols, counts.items()):
-                        with col:
-                            st.metric(f"{stage_emoji.get(k, '')} {k.capitalize()}", v)
-
-                    st.markdown("### 🚦 Bunch Priority Actions")
-                    priority_order = ["rotten", "overripe", "ripe", "unripe"]
-                    stage_emoji_single = {"unripe": "🟢", "ripe": "🟡", "overripe": "🟠", "rotten": "🔴"}
-                    for stage in priority_order:
-                        items = [r for r in bunch_results if r["ripeness"] == stage and r["grade"] != "RECHECK"]
-                        if items:
-                            info = recommendation_rules[stage]
-                            avg_conf = sum(x["confidence"] for x in items) / len(items)
-                            st.markdown(f"""
-                            <div class="bv-card" style="padding: 16px 20px; margin-bottom: 10px;">
-                                <p style="margin:2px 0; font-size:1.05rem;">
-                                    {stage_emoji_single.get(stage,'')} <b>{len(items)} {stage} banana(s)</b>
-                                    — avg. confidence {avg_conf:.0f}%
-                                </p>
-                                <p style="margin:2px 0;"><b>Status:</b> {info['status']}</p>
-                                <p style="margin:2px 0;"><b>Recommended Action:</b> {info['action']}</p>
-                                <p style="margin:2px 0; color:#aaa;"><b>Why:</b> {info['reason']}</p>
-                            </div>
-                            """, unsafe_allow_html=True)
-
-                    recheck_items = [r for r in bunch_results if r["grade"] == "RECHECK"]
-                    if recheck_items:
-                        st.markdown(f"""
-                        <div class="bv-card" style="padding: 16px 20px; margin-bottom: 10px; border-color:#9e9e9e;">
-                            <p style="margin:2px 0; font-size:1.05rem;">⚪ <b>{len(recheck_items)} banana(s) need manual recheck</b></p>
-                            <p style="margin:2px 0; color:#aaa;">AI confidence was too low to trust automatically — worth a quick visual check before routing these.</p>
-                        </div>
-                        """, unsafe_allow_html=True)
-
-                    text_buf = __import__("io").StringIO()
-                    writer = csv.writer(text_buf)
-                    writer.writerow(["Banana #", "Ripeness", "Confidence (%)", "Decision Class", "Urgency", "Recommended Action"])
-                    for i, r in enumerate(bunch_results, start=1):
-                        writer.writerow([i, r["ripeness"], f"{r['confidence']:.1f}", r["grade"], r["urgency"], r["action"]])
-                    st.download_button(
-                        "⬇️ Download Bunch Report (CSV)",
-                        data=text_buf.getvalue(),
-                        file_name=f"banavey_bunch_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-                        mime="text/csv"
-                    )
-
-                    with st.expander("See individual bananas"):
-                        grid_cols = st.columns(4)
-                        for i, r in enumerate(bunch_results):
-                            with grid_cols[i % 4]:
-                                st.image(r["image"], width="stretch")
-                                st.caption(f"#{i+1}: {r['ripeness'].upper()} ({r['confidence']:.0f}%)")
+            st.markdown("---")
+            if st.button("📱 Generate Digital Passport", key="bunch_passport_btn"):
+                batch_id = f"BV-BUNCH-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+                passport_data = {
+                    "batch_id": batch_id,
+                    "stage": predicted_class,
+                    "confidence": f"{confidence:.1f}",
+                    "grade": rec["grade"],
+                    "urgency": rec["urgency"],
+                    "action": rec["action"],
+                    "date": datetime.now().strftime("%d %b %Y")
+                }
+                qr_bytes, passport_url = generate_passport_qr(passport_data)
+                st.image(qr_bytes, caption="Scan to view this bunch's Digital Passport", width=250)
+                st.caption(f"Or visit: {passport_url}")
 
     # ---------- Batch Scan ----------
     with tab_batch:
