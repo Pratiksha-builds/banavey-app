@@ -15,6 +15,12 @@ import struct
 import math
 from PIL import ImageDraw, ImageFont
 
+try:
+    import requests
+    REQUESTS_AVAILABLE = True
+except ImportError:
+    REQUESTS_AVAILABLE = False
+
 
 def generate_passport_qr(data_dict):
     query_string = urllib.parse.urlencode(data_dict)
@@ -347,6 +353,95 @@ def predict(img):
     return predicted_class, confidence
 
 
+# ---------------- Weather-aware transport advisory (Jalgaon) ----------------
+JALGAON_LAT, JALGAON_LON = 21.0077, 75.5626
+
+WMO_WEATHER_DESCRIPTIONS = {
+    0: "Clear sky", 1: "Mainly clear", 2: "Partly cloudy", 3: "Overcast",
+    45: "Fog", 48: "Depositing rime fog",
+    51: "Light drizzle", 53: "Moderate drizzle", 55: "Dense drizzle",
+    61: "Slight rain", 63: "Moderate rain", 65: "Heavy rain",
+    71: "Slight snow", 73: "Moderate snow", 75: "Heavy snow",
+    80: "Slight rain showers", 81: "Moderate rain showers", 82: "Violent rain showers",
+    95: "Thunderstorm", 96: "Thunderstorm with hail", 99: "Thunderstorm with heavy hail",
+}
+
+
+@st.cache_data(ttl=1800)
+def fetch_jalgaon_weather():
+    """
+    Live weather for Jalgaon via Open-Meteo (free, no API key required).
+    Cached for 30 minutes so repeated scans don't hammer the API.
+    Returns a dict, or None if the request fails for any reason — callers
+    must handle that gracefully rather than assume weather data exists.
+    """
+    if not REQUESTS_AVAILABLE:
+        return None
+    try:
+        resp = requests.get(
+            "https://api.open-meteo.com/v1/forecast",
+            params={
+                "latitude": JALGAON_LAT,
+                "longitude": JALGAON_LON,
+                "current": "temperature_2m,relative_humidity_2m,weather_code",
+                "timezone": "Asia/Kolkata",
+            },
+            timeout=6
+        )
+        resp.raise_for_status()
+        current = resp.json().get("current", {})
+        temp = current.get("temperature_2m")
+        humidity = current.get("relative_humidity_2m")
+        code = current.get("weather_code")
+        if temp is None or humidity is None:
+            return None
+        return {
+            "temperature_c": temp,
+            "humidity_pct": humidity,
+            "condition": WMO_WEATHER_DESCRIPTIONS.get(code, "Unknown"),
+        }
+    except Exception:
+        return None
+
+
+def get_weather_advisory(weather):
+    """Rule-based advisory — framed as handling/quality risk, never as a
+    precise shelf-life claim, since we have no measured data to back that up."""
+    if weather["temperature_c"] > 30 or weather["humidity_pct"] > 70:
+        return (
+            "⚠️ Prioritize faster/local distribution — warm and humid conditions "
+            "may accelerate quality deterioration during handling.",
+            "#ff9800"
+        )
+    return (
+        "✅ Conditions are mild — no added urgency from weather right now.",
+        "#4CAF50"
+    )
+
+
+def render_weather_card():
+    """Renders the '🌦️ Transport Conditions' card. Safe to call anywhere —
+    shows a quiet fallback message if the weather API is unreachable."""
+    weather = fetch_jalgaon_weather()
+    if weather is None:
+        st.caption("🌦️ Live weather context unavailable right now (network or API issue) — routing advice above is unaffected.")
+        return
+
+    advisory_text, advisory_color = get_weather_advisory(weather)
+    st.markdown(f"""
+    <div class="bv-card" style="border-color:{advisory_color};">
+        <p style="margin:0 0 8px 0; font-weight:700; color:#f9d71c;">🌦️ Transport Conditions — Jalgaon</p>
+        <div style="display:flex; gap:24px; flex-wrap:wrap; margin-bottom:10px;">
+            <div><span style="color:#aaa;">Temperature</span><br><b style="font-size:1.3rem;">{weather['temperature_c']:.1f}°C</b></div>
+            <div><span style="color:#aaa;">Humidity</span><br><b style="font-size:1.3rem;">{weather['humidity_pct']:.0f}%</b></div>
+            <div><span style="color:#aaa;">Condition</span><br><b style="font-size:1.3rem;">{weather['condition']}</b></div>
+        </div>
+        <p style="margin:0; color:{advisory_color};">{advisory_text}</p>
+    </div>
+    """, unsafe_allow_html=True)
+    st.caption("Live data via Open-Meteo. Advisory reflects general handling/quality risk, not a measured shelf-life prediction.")
+    return weather
+
 
 def render_confidence_bar(confidence):
     st.markdown(f"""
@@ -492,11 +587,17 @@ else:
             file_sig = (uploaded_file.name, uploaded_file.size, input_mode)
             if is_new_scan("single_scan_sig", file_sig):
                 play_success_feedback(f"Scan complete — {predicted_class.upper()}")
+
             render_result_card(predicted_class, confidence, rec)
+
+            st.markdown("---")
+            weather = render_weather_card()
 
             st.markdown("---")
             with st.expander("🔮 What Happens Next? (Scenario Simulation)"):
                 st.caption("This shows a typical ripening progression scenario — not a re-analysis of this exact banana over time.")
+                if weather and (weather["temperature_c"] > 30 or weather["humidity_pct"] > 70):
+                    st.caption("🌦️ Current Jalgaon conditions are warm/humid — ripening in practice may run faster than this general estimate.")
                 stage_progression = ["unripe", "ripe", "overripe", "rotten"]
                 if predicted_class in stage_progression:
                     current_index = stage_progression.index(predicted_class)
@@ -539,11 +640,20 @@ else:
             "banana — faster, and more realistic for how bunches are actually bought and sold."
         )
 
-        bunch_file = st.file_uploader(
-            "Choose a photo of a bunch, stalk, or dozen of bananas",
-            type=["jpg", "jpeg", "png"],
-            key="bunch"
+        bunch_input_mode = st.radio(
+            "How do you want to provide the photo?",
+            ["📁 Upload Photo", "📷 Use Camera"],
+            horizontal=True,
+            key="bunch_input_mode"
         )
+        if bunch_input_mode == "📁 Upload Photo":
+            bunch_file = st.file_uploader(
+                "Choose a photo of a bunch, stalk, or dozen of bananas",
+                type=["jpg", "jpeg", "png"],
+                key="bunch"
+            )
+        else:
+            bunch_file = st.camera_input("Point your camera at the bunch and capture", key="bunch_camera")
 
         if bunch_file is not None:
             bunch_image = load_image(bunch_file)
@@ -561,7 +671,7 @@ else:
                     "meaningful for a non-banana photo — please try again with a clear photo."
                 )
 
-            bunch_sig = (bunch_file.name, bunch_file.size)
+            bunch_sig = (bunch_file.name, bunch_file.size, bunch_input_mode)
             if is_new_scan("bunch_scan_sig", bunch_sig):
                 play_success_feedback(f"Bunch complete — {predicted_class.upper()}")
 
@@ -571,6 +681,26 @@ else:
                 "if a few individual bananas look noticeably different from the rest, a quick "
                 "visual check on those is still worthwhile."
             )
+
+            st.markdown("---")
+            bunch_weather = render_weather_card()
+
+            st.markdown("---")
+            with st.expander("🔮 What Happens Next? (Scenario Simulation)"):
+                st.caption("This shows a typical ripening progression scenario for the bunch's overall stage — not a re-analysis of this exact photo over time.")
+                if bunch_weather and (bunch_weather["temperature_c"] > 30 or bunch_weather["humidity_pct"] > 70):
+                    st.caption("🌦️ Current Jalgaon conditions are warm/humid — ripening in practice may run faster than this general estimate.")
+                stage_progression = ["unripe", "ripe", "overripe", "rotten"]
+                if predicted_class in stage_progression:
+                    current_index = stage_progression.index(predicted_class)
+                    for days_ahead, label in [(1, "In ~1 day"), (2, "In ~2 days"), (3, "In ~3 days")]:
+                        future_index = min(current_index + days_ahead, len(stage_progression) - 1)
+                        future_stage = stage_progression[future_index]
+                        future_info = recommendation_rules[future_stage]
+                        stage_emoji = urgency_colors.get(future_info["urgency"], "")
+                        st.write(f"**{label}:** {stage_emoji} Likely stage: **{future_stage.upper()}** → {future_info['action']}")
+                else:
+                    st.write("Scenario simulation isn't available for a low-confidence result — please recheck manually first.")
 
             st.markdown("---")
             if st.button("📱 Generate Digital Passport", key="bunch_passport_btn"):
@@ -653,6 +783,10 @@ else:
             recheck_items = [r for r in results if r["grade"] == "RECHECK"]
             if recheck_items:
                 st.write(f"**{len(recheck_items)} banana(s) need manual recheck** (low AI confidence)")
+
+            st.markdown("---")
+            render_weather_card()
+            st.markdown("---")
 
             # CSV export
             import io as _io
@@ -747,7 +881,10 @@ else:
                     rec = get_recommendation(predicted_class, confidence)
                     if analyze_clicked:
                         play_success_feedback(f"Scan complete — {predicted_class.upper()}")
+
                     render_result_card(predicted_class, confidence, rec)
+                    st.markdown("---")
+                    render_weather_card()
 
             except FileNotFoundError:
                 st.error(
