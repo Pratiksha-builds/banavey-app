@@ -404,22 +404,58 @@ def fetch_jalgaon_weather():
         return None
 
 
-def get_weather_advisory(weather):
+def get_weather_advisory(weather, predicted_class=None):
     """Rule-based advisory — framed as handling/quality risk, never as a
-    precise shelf-life claim, since we have no measured data to back that up."""
-    if weather["temperature_c"] > 30 or weather["humidity_pct"] > 70:
-        return (
-            "⚠️ Prioritize faster/local distribution — warm and humid conditions "
-            "may accelerate quality deterioration during handling.",
-            "#ff9800"
-        )
-    return (
-        "✅ Conditions are mild — no added urgency from weather right now.",
-        "#4CAF50"
-    )
+    precise shelf-life claim, since we have no measured data to back that up.
+    Returns (advice_text, color, risk_level). If a ripeness stage is given, the
+    advice is tailored to it."""
+    temp = weather["temperature_c"]
+    hum = weather["humidity_pct"]
+    cond = str(weather.get("condition", "")).lower()
+    wet = any(w in cond for w in ("rain", "drizzle", "shower", "thunder"))
+
+    if temp > 35 or (temp > 30 and hum > 70) or (wet and temp > 30):
+        level, color = "High", "#f44336"
+    elif temp > 30 or hum > 70 or wet:
+        level, color = "Moderate", "#ff9800"
+    else:
+        level, color = "Low", "#4CAF50"
+
+    stage_advice = {
+        "unripe": {
+            "High": "Can travel, but avoid loading in peak heat — prefer early morning or night dispatch with ventilation.",
+            "Moderate": "Suitable for transport; keep loads shaded and ventilated.",
+            "Low": "Good conditions for transport — normal dispatch is fine.",
+        },
+        "ripe": {
+            "High": "Dispatch quickly to the nearest market — hot, humid handling can speed up quality loss.",
+            "Moderate": "Prefer faster/local distribution and avoid long waits in the sun.",
+            "Low": "Conditions are mild — normal fresh-market dispatch is fine.",
+        },
+        "overripe": {
+            "High": "Act today — sell locally or send to processing. Avoid long-distance transport in this weather.",
+            "Moderate": "Prioritize local sale or processing soon rather than long routes.",
+            "Low": "Weather is not adding risk, but still sell or process soon.",
+        },
+        "rotten": {
+            "High": "Do not dispatch for fresh sale. Separate it from good stock now.",
+            "Moderate": "Do not dispatch for fresh sale. Separate it from good stock.",
+            "Low": "Do not dispatch for fresh sale. Separate it from good stock.",
+        },
+    }
+    generic = {
+        "High": "Hot/humid or wet conditions raise handling risk — prioritize faster, local distribution and ventilate loads.",
+        "Moderate": "Conditions may speed up quality loss — avoid long waits and keep loads shaded.",
+        "Low": "Conditions are mild — no added urgency from weather right now.",
+    }
+    text = stage_advice.get(predicted_class, generic)[level]
+    if wet:
+        text += " Rain is present — cover loads to keep them dry."
+    icon = {"High": "🔴", "Moderate": "🟠", "Low": "🟢"}[level]
+    return f"{icon} {text}", color, level
 
 
-def render_weather_card():
+def render_weather_card(predicted_class=None):
     """Renders the '🌦️ Transport Conditions' card. Safe to call anywhere —
     shows a quiet fallback message if the weather API is unreachable."""
     weather = fetch_jalgaon_weather()
@@ -427,10 +463,10 @@ def render_weather_card():
         st.caption("🌦️ Live weather context unavailable right now (network or API issue) — routing advice above is unaffected.")
         return
 
-    advisory_text, advisory_color = get_weather_advisory(weather)
+    advisory_text, advisory_color, risk_level = get_weather_advisory(weather, predicted_class)
     st.markdown(f"""
     <div class="bv-card" style="border-color:{advisory_color};">
-        <p style="margin:0 0 8px 0; font-weight:700; color:#f9d71c;">🌦️ Transport Conditions — Jalgaon</p>
+        <p style="margin:0 0 8px 0; font-weight:700; color:#f9d71c;">🌦️ Transport Conditions — Jalgaon &nbsp;·&nbsp; <span style="color:{advisory_color};">Weather risk: {risk_level}</span></p>
         <div style="display:flex; gap:24px; flex-wrap:wrap; margin-bottom:10px;">
             <div><span style="color:#aaa;">Temperature</span><br><b style="font-size:1.3rem;">{weather['temperature_c']:.1f}°C</b></div>
             <div><span style="color:#aaa;">Humidity</span><br><b style="font-size:1.3rem;">{weather['humidity_pct']:.0f}%</b></div>
@@ -591,7 +627,7 @@ else:
             render_result_card(predicted_class, confidence, rec)
 
             st.markdown("---")
-            weather = render_weather_card()
+            weather = render_weather_card(predicted_class)
 
             st.markdown("---")
             with st.expander("🔮 What Happens Next? (Scenario Simulation)"):
@@ -683,7 +719,7 @@ else:
             )
 
             st.markdown("---")
-            bunch_weather = render_weather_card()
+            bunch_weather = render_weather_card(predicted_class)
 
             st.markdown("---")
             with st.expander("🔮 What Happens Next? (Scenario Simulation)"):
@@ -884,7 +920,7 @@ else:
 
                     render_result_card(predicted_class, confidence, rec)
                     st.markdown("---")
-                    render_weather_card()
+                    render_weather_card(predicted_class)
 
             except FileNotFoundError:
                 st.error(
@@ -908,11 +944,11 @@ else:
         with st.form("impact_form"):
             col_a, col_b = st.columns(2)
             with col_a:
-                daily_volume_kg = st.number_input(
-                    "Bananas handled per day (kg)", min_value=0.0, value=1000.0, step=50.0
+                daily_volume_dozen = st.number_input(
+                    "Bananas handled per day (dozens)", min_value=0.0, value=500.0, step=10.0
                 )
-                price_per_kg = st.number_input(
-                    "Average market price (₹ / kg)", min_value=0.0, value=15.0, step=1.0
+                price_per_dozen = st.number_input(
+                    "Average market price (₹ / dozen)", min_value=0.0, value=50.0, step=5.0
                 )
             with col_b:
                 current_waste_pct = st.slider(
@@ -927,16 +963,16 @@ else:
             st.session_state.impact_calculated = True
 
             new_waste_pct = max(current_waste_pct - waste_reduction_pct, 0)
-            waste_before_kg = daily_volume_kg * (current_waste_pct / 100)
-            waste_after_kg = daily_volume_kg * (new_waste_pct / 100)
-            kg_saved_per_day = max(waste_before_kg - waste_after_kg, 0)
-            value_saved_per_day = kg_saved_per_day * price_per_kg
+            waste_before_dozen = daily_volume_dozen * (current_waste_pct / 100)
+            waste_after_dozen = daily_volume_dozen * (new_waste_pct / 100)
+            dozen_saved_per_day = max(waste_before_dozen - waste_after_dozen, 0)
+            value_saved_per_day = dozen_saved_per_day * price_per_dozen
             value_saved_per_year = value_saved_per_day * 365
 
             st.markdown("### 📈 Estimated Results")
             c1, c2, c3 = st.columns(3)
             with c1:
-                st.metric("Waste Reduced / Day", f"{kg_saved_per_day:,.0f} kg")
+                st.metric("Waste Reduced / Day", f"{dozen_saved_per_day:,.0f} dozen")
             with c2:
                 st.metric("Value Recovered / Day", f"₹{value_saved_per_day:,.0f}")
             with c3:
@@ -945,11 +981,11 @@ else:
             st.markdown(f"""
             <div class="bv-card">
                 <p style="margin:4px 0;">Without AI-assisted routing, an estimated <b>{current_waste_pct}%</b>
-                of a {daily_volume_kg:,.0f} kg/day operation goes to waste — about
-                <b>{waste_before_kg:,.0f} kg/day</b>.</p>
+                of a {daily_volume_dozen:,.0f} dozen/day operation goes to waste — about
+                <b>{waste_before_dozen:,.0f} dozen/day</b>.</p>
                 <p style="margin:4px 0;">With BanaVey-style ripeness detection and routing, waste could drop to
                 roughly <b>{new_waste_pct}%</b>, recovering an estimated
-                <b>{kg_saved_per_day:,.0f} kg/day (₹{value_saved_per_day:,.0f}/day)</b> that would otherwise
+                <b>{dozen_saved_per_day:,.0f} dozen/day (₹{value_saved_per_day:,.0f}/day)</b> that would otherwise
                 have been lost.</p>
             </div>
             """, unsafe_allow_html=True)
@@ -961,7 +997,7 @@ else:
 
             with st.expander("ℹ️ Why these default numbers?"):
                 st.write(
-                    "The default values (1000 kg/day, ₹15/kg, 20% waste) are **starting-point assumptions**, "
+                    "The default values (500 dozen/day, ₹50/dozen, 20% waste) are **starting-point assumptions**, "
                     "not figures pulled from a specific published study. Post-harvest fruit and vegetable loss "
                     "in India is widely discussed as a significant problem, but the exact percentage varies a "
                     "lot by crop, region, season, and how 'waste' is measured — so rather than quote one number "
