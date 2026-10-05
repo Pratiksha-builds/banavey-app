@@ -6,3 +6,4 @@ qrcode[pil]
 opencv-python-headless
 scipy
 scikit-image
+requests
