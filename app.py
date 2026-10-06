@@ -117,6 +117,40 @@ def show_passport_view(params):
 # ---------------- Page setup ----------------
 st.set_page_config(page_title="BanaVey AI", page_icon="🍌", layout="centered")
 
+# ---------------- Prefer the BACK camera on phones ----------------
+# st.camera_input opens the front camera by default. This asks the browser for
+# the rear camera first. Wrapped so that if it can't run, the normal camera
+# (with its built-in switch-camera button) still works exactly as before.
+try:
+    import streamlit.components.v1 as components
+    components.html("""
+    <script>
+    (function () {
+      try {
+        var w = window.parent;
+        if (w.__banaveyBackCam) return;
+        w.__banaveyBackCam = true;
+        var md = w.navigator.mediaDevices;
+        if (!md || !md.getUserMedia) return;
+        var orig = md.getUserMedia.bind(md);
+        md.getUserMedia = function (c) {
+          try {
+            if (c && c.video) {
+              var v = (c.video === true) ? {} : Object.assign({}, c.video);
+              delete v.deviceId;
+              v.facingMode = { ideal: "environment" };
+              c = Object.assign({}, c, { video: v });
+            }
+          } catch (e) {}
+          return orig(c).catch(function () { return orig(arguments[0] === undefined ? { video: true } : { video: true }); });
+        };
+      } catch (e) {}
+    })();
+    </script>
+    """, height=0)
+except Exception:
+    pass
+
 st.markdown("""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;700;800&display=swap');
@@ -351,6 +385,29 @@ def predict(img):
     predicted_class = class_names[predicted_index]
     confidence = float(prediction[0][predicted_index]) * 100
     return predicted_class, confidence
+
+
+def get_mixed_stage_note(img):
+    """Returns a note if the photo shows signs of more than one ripeness stage
+    (second-highest class probability >= 25%). Probabilities are the model's
+    confidence per stage, not an exact count of bananas. Never raises."""
+    try:
+        img_r = img.resize((224, 224))
+        arr = np.expand_dims(tf.keras.utils.img_to_array(img_r), axis=0)
+        probs = model.predict(arr, verbose=0)[0]
+        order = np.argsort(probs)[::-1]
+        top, second = order[0], order[1]
+        if float(probs[second]) >= 0.25:
+            return (f"{class_names[top].capitalize()} {probs[top]*100:.0f}% · "
+                    f"{class_names[second].capitalize()} {probs[second]*100:.0f}%")
+    except Exception:
+        pass
+    return None
+
+
+CAMERA_TIP = ("📱 On a phone the camera may open on the front lens — tap **Switch camera** "
+              "for the back one. Faster option: choose **Upload Photo**, then **Take Photo**, "
+              "which usually opens the back camera directly.")
 
 
 # ---------------- Weather-aware transport advisory (Jalgaon) ----------------
@@ -602,6 +659,7 @@ else:
         if input_mode == "📁 Upload Photo":
             uploaded_file = st.file_uploader("Choose a banana photo", type=["jpg", "jpeg", "png"], key="single")
         else:
+            st.caption(CAMERA_TIP)
             uploaded_file = st.camera_input("Point your camera at a banana and capture", key="single_camera")
 
         if uploaded_file is not None:
@@ -689,6 +747,7 @@ else:
                 key="bunch"
             )
         else:
+            st.caption(CAMERA_TIP)
             bunch_file = st.camera_input("Point your camera at the bunch and capture", key="bunch_camera")
 
         if bunch_file is not None:
@@ -712,6 +771,13 @@ else:
                 play_success_feedback(f"Bunch complete — {predicted_class.upper()}")
 
             render_result_card(predicted_class, confidence, rec)
+            mixed_note = get_mixed_stage_note(bunch_image)
+            if mixed_note:
+                st.info(
+                    f"🍌 **Mixed ripeness signals in this bunch:** {mixed_note}. "
+                    "The verdict above follows the dominant stage. If the bananas differ clearly, "
+                    "separate them into groups and scan each in **Batch Scan**."
+                )
             st.caption(
                 "This reflects the overall/dominant condition of the bunch as photographed — "
                 "if a few individual bananas look noticeably different from the rest, a quick "
