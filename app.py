@@ -659,7 +659,6 @@ else:
         if input_mode == "📁 Upload Photo":
             uploaded_file = st.file_uploader("Choose a banana photo", type=["jpg", "jpeg", "png"], key="single")
         else:
-            st.caption(CAMERA_TIP)
             uploaded_file = st.camera_input("Point your camera at a banana and capture", key="single_camera")
 
         if uploaded_file is not None:
@@ -747,7 +746,6 @@ else:
                 key="bunch"
             )
         else:
-            st.caption(CAMERA_TIP)
             bunch_file = st.camera_input("Point your camera at the bunch and capture", key="bunch_camera")
 
         if bunch_file is not None:
